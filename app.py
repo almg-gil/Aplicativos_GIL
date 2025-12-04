@@ -327,9 +327,20 @@ class LegislativeProcessor:
         )
         emenda_pattern = re.compile(r"^(?:\s*)EMENDA Nº (\d+)\s*", re.MULTILINE)
         substitutivo_pattern = re.compile(r"^(?:\s*)SUBSTITUTIVO Nº (\d+)\s*", re.MULTILINE)
-        project_pattern = re.compile(
-            r"Conclusão\s*([\s\S]*?)(Projeto de Lei|PL|Projeto de Resolução|PRE|Proposta de Emenda à Constituição|PEC|Projeto de Lei Complementar|PLC|Requerimento)\s+(?:nº|Nº)?\s*(\d{1,4}(?:\.\d{1,3})?)\s*/\s*(\d{4})",
-            re.IGNORECASE | re.DOTALL
+                project_pattern = re.compile(\
+r"(?:"
+    r"(Projeto de Lei Complementar|PLC)|" \
+    r"(Projeto de Lei|PL)|" \
+    r"(Projeto de Resolução|PRE)|" \
+    r"(Proposta de Emenda à Constituição|PEC)|" \
+    r"(Requerimento)" \
+r")" \
+r".*?" \
+r"(?:[nN][º°]\s*)?" \
+r"(\d{1,4}(?:\.\d{1,3})?)" \
+r"\s*/\s*" \
+r"(\d{4})", \
+            re.IGNORECASE | re.DOTALL\
         )
 
         for match in emenda_completa_pattern.finditer(clean_text):
