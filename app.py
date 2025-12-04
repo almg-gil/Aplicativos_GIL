@@ -289,6 +289,7 @@ class LegislativeProcessor:
         )
         emenda_pattern = re.compile(r"^(?:\s*)EMENDA Nº (\d+)\s*", re.MULTILINE)
         substitutivo_pattern = re.compile(r"^(?:\s*)SUBSTITUTIVO Nº (\d+)\s*", re.MULTILINE)
+        # Regex corrigida: mais robusta para texto intermediário
         project_pattern = re.compile(
             r"(?:"
                 r"(Projeto de Lei Complementar|PLC)|"
@@ -297,11 +298,12 @@ class LegislativeProcessor:
                 r"(Proposta de Emenda à Constituição|PEC)|"
                 r"(Requerimento)"
             r")"
-            r".*?"
-            r"(?:[nN][º°]\s*)?"
-            r"(\d{1,4}(?:\.\d{1,3})?)"
+            r"[\s\S]*?"  # Aceita qualquer caractere, incluindo quebras de linha
+            r"(?:[nN][º°]?\s*)?"
+            r"(\d{1,4}(?:\.\d{1,3})?)"  # Número
             r"\s*/\s*"
-            r"(\d{4})",
+            r"(\d{4})"  # Ano
+            r"(?![\d/])",  # Evita capturar parte de "Substitutivo nº 1"
             re.IGNORECASE | re.DOTALL
         )
         for match in emenda_completa_pattern.finditer(clean_text):
@@ -316,13 +318,25 @@ class LegislativeProcessor:
             list(emenda_pattern.finditer(clean_text)) + list(substitutivo_pattern.finditer(clean_text)),
             key=lambda x: x.start()
         )
+        # Processa cada "EMENDA" ou "SUBSTITUTIVO"
         for title_match in all_matches:
-            text_before_title = clean_text[:title_match.start()]
+            start_idx = title_match.start()
+            # Janela de busca: 500 caracteres antes e depois
+            search_start = max(0, start_idx - 500)
+            search_end = start_idx
+            text_to_search_up = clean_text[search_start:search_end]
+            text_to_search_down = clean_text[start_idx:start_idx + 500]
             last_project_match = None
-            for match in project_pattern.finditer(text_before_title):
+            # Procura antes do título
+            for match in project_pattern.finditer(text_to_search_up):
                 last_project_match = match
+            # Se não achou antes, procura depois
+            if last_project_match is None:
+                for match in project_pattern.finditer(text_to_search_down):
+                    last_project_match = match
+                    break
             if last_project_match:
-                # Determinar a sigla com base em qual grupo de tipo foi capturado
+                # Determina a sigla (PL, PLC, PRE, etc.)
                 groups_tipo = [
                     last_project_match.group(1),  # PLC
                     last_project_match.group(2),  # PL
@@ -336,7 +350,7 @@ class LegislativeProcessor:
                         sigla_options = ["PLC", "PL", "PRE", "PEC", "RQN"]
                         sigla = sigla_options[i]
                         break
-                # Obter número e ano dos grupos 6 e 7
+                # Número e ano estão nos grupos 6 e 7
                 numero_raw = last_project_match.group(6)
                 ano_raw = last_project_match.group(7)
                 if numero_raw is None or ano_raw is None:
@@ -348,6 +362,7 @@ class LegislativeProcessor:
                 if project_key not in found_projects:
                     found_projects[project_key] = set()
                 found_projects[project_key].add(item_type)
+        # Segunda passagem (redundante, mas mantida por compatibilidade)
         emenda_projeto_lei_pattern = re.compile(r"EMENDAS AO PROJETO DE LEI Nº (\d{1,4}\.?\d{0,3})/(\d{4})", re.IGNORECASE)
         for match in emenda_projeto_lei_pattern.finditer(clean_text):
             numero_raw = match.group(1).replace('.', '')
@@ -372,6 +387,8 @@ class LegislativeProcessor:
             "Requerimentos": df_requerimentos,
             "Pareceres": df_pareceres
         }
+# === RESTANTE DO CÓDIGO (AdministrativeProcessor, ExecutiveProcessor, etc.) ===
+# (mantido exatamente como no arquivo original, sem alterações)
 class AdministrativeProcessor:
     def __init__(self, pdf_bytes: bytes):
         self.pdf_bytes = pdf_bytes
