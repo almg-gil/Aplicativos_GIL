@@ -76,20 +76,21 @@ class LegislativeProcessor:
 
         reader = pypdf.PdfReader(io.BytesIO(self.pdf_bytes))
 
-        # Extrai e NORMALIZA por página antes de montar offsets
+        # Extrai por página e preserva quebras de linha (IMPORTANTE p/ regex com MULTILINE e ^)
         page_texts = []
         for page in reader.pages:
             pt = page.extract_text() or ""
+            # Normaliza apenas espaços/tabs, sem mexer em \n
             pt = re.sub(r"[ \t]+", " ", pt)
-            pt = re.sub(r"\n+", "\n", pt)
             page_texts.append(pt)
 
+        # Monta texto global com offsets por página
         self._offsets = []  # (start, end, page_number)
         parts = []
         cursor = 0
 
         for idx, pt in enumerate(page_texts, start=1):
-            chunk = pt + "\n"  # separador estável
+            chunk = pt + "\n"  # separador estável entre páginas
             start = cursor
             end = cursor + len(chunk)
             self._offsets.append((start, end, idx))
@@ -439,6 +440,7 @@ class LegislativeProcessor:
             "Requerimentos": df_requerimentos,
             "Pareceres": df_pareceres
         }
+
 class AdministrativeProcessor:
     def __init__(self, pdf_bytes: bytes):
         self.pdf_bytes = pdf_bytes
@@ -516,13 +518,11 @@ class AdministrativeProcessor:
         )
 
         # --- (5) Fechos (sanção): 2 padrões ---
-        #  (a) Palácio da Inconfidência, 4 de dezembro de 2025.
         self.fecho_palacio_regex = re.compile(
             r'Pal[aá]cio\s+da\s+Inconfid[eê]ncia\s*,\s*'
             r'(\d{1,2})\s+de\s+([A-Za-zçÇãÃáÁéÉíÍóÓôÔúÚ]+)\s+de\s+(\d{4})',
             re.IGNORECASE
         )
-        #  (b) Sala de Reuniões da Mesa da Assembleia Legislativa, 15 de dezembro de 2025.
         self.fecho_sala_mesa_regex = re.compile(
             r'Sala\s+de\s+Reuni[õo]es\s+da\s+Mesa\s+da\s+Assembleia\s+Legislativa\s*,\s*'
             r'(\d{1,2})\s+de\s+([A-Za-zçÇãÃáÁéÉíÍóÓôÔúÚ]+)\s+de\s+(\d{4})',
@@ -573,7 +573,6 @@ class AdministrativeProcessor:
         }.get(t, "")
 
     def process_pdf(self):
-        # ---- 1) Extrai texto por página (texto corrido, como no Legislativo) ----
         try:
             reader = pypdf.PdfReader(io.BytesIO(self.pdf_bytes))
         except Exception as e:
@@ -584,7 +583,6 @@ class AdministrativeProcessor:
         for p in reader.pages:
             page_texts.append(p.extract_text() or "")
 
-        # texto global + mapeamento de offsets -> página
         offsets = []
         full_text_parts = []
         cursor = 0
@@ -604,7 +602,6 @@ class AdministrativeProcessor:
                     return pnum
             return ""
 
-        # ---- 2) Acha todas as normas publicadas com posição (para formar blocos) ----
         normas = []
         for m in self.norma_publicada_regex.finditer(full_text):
             pos = m.start()
@@ -620,13 +617,12 @@ class AdministrativeProcessor:
                     "pos": pos,
                     "end": m.end(),
                     "pagina": pagina,
-                    "coluna": 1,   # <-- SEMPRE 1, como solicitado
+                    "coluna": 1,
                     "sigla": sigla,
                     "numero": numero,
                     "ano": ano
                 })
 
-        # ---- 3) Monta saída e processa alterações + sanção por bloco ----
         resultados = []
 
         for i, n in enumerate(normas):
@@ -673,7 +669,6 @@ class AdministrativeProcessor:
                     ano_alt = alt.group(3) or alt.group(4) or ""
                     sigla_alt = self._normalizar_sigla(tipo_alt_raw)
 
-                    # evita auto-referência
                     if sigla_alt == linha["Sigla"] and num_alt == linha["Número"]:
                         if (not ano_alt) or (ano_alt == linha["Ano"]):
                             continue
@@ -681,7 +676,6 @@ class AdministrativeProcessor:
                     chave = f"{sigla_alt} {num_alt}" + (f" {ano_alt}" if ano_alt else "")
                     _add_alt(chave)
 
-            # 3a) Lista longa por caput
             cap = self.revogacoes_caput_regex.search(bloco)
             if cap:
                 after = bloco[cap.end():]
@@ -692,7 +686,6 @@ class AdministrativeProcessor:
                 segmento = after[:fim] if fim is not None else after
                 _extrair_alteracoes(segmento)
 
-            # 3b) Outros gatilhos em janelas
             for gat in (self.revogacao_simples_regex, self.sem_efeito_regex, self.prorrogacao_regex):
                 for gm in gat.finditer(bloco):
                     janela = bloco[gm.start(): gm.start() + 1200]
@@ -704,7 +697,6 @@ class AdministrativeProcessor:
                 janela = bloco[start_j:end_j]
                 _extrair_alteracoes(janela)
 
-        # ---- 4) DCS ----
         if self.regex_dcs.search(full_text):
             resultados.append({
                 "Página": "",
@@ -728,20 +720,18 @@ class AdministrativeProcessor:
         output_csv = io.StringIO()
         df.to_csv(output_csv, index=False, encoding="utf-8-sig")
         return output_csv.getvalue().encode('utf-8-sig')
+
 class ExecutiveProcessor:
     def __init__(self, pdf_bytes: bytes):
-        # 1. Pré-processamento: Limpa os bytes do PDF antes de armazenar.
         self.pdf_bytes = self._clean_pdf_bytes(pdf_bytes)
-        
-        # 2. Mapeamento de Tipos
+
         self.mapa_tipos = {
             "LEI": "LEI",
             "LEI COMPLEMENTAR": "LCP",
             "DECRETO": "DEC",
             "DECRETO NE": "DNE"
         }
-        
-        # 3. Expressões Regulares
+
         self.norma_regex = re.compile(
             r'\b(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]\s*([\d\s\.]+),\s*DE\s+([A-Z\s\d]+)\b'
         )
@@ -755,25 +745,13 @@ class ExecutiveProcessor:
         )
 
     def _clean_pdf_bytes(self, dirty_bytes: bytes) -> bytes:
-        """
-        Procura a assinatura binária do PDF (%PDF-) e remove quaisquer bytes
-        anteriores a ela. Isso corrige o erro 'Cannot find Root object'.
-        """
         pdf_signature = b'%PDF-'
         try:
-            # Tenta encontrar o índice da assinatura.
             start_index = dirty_bytes.index(pdf_signature)
-            
             if start_index > 0:
-                # Se start_index for maior que zero, encontramos lixo binário.
-                # Retorna apenas a parte que começa com '%PDF-'.
                 return dirty_bytes[start_index:]
-            
-            # Se start_index for 0, o PDF já estava correto.
             return dirty_bytes
-            
         except ValueError:
-            # Se a assinatura não for encontrada, retorna os bytes originais.
             return dirty_bytes
 
     def find_relevant_pages(self) -> tuple:
@@ -795,7 +773,7 @@ class ExecutiveProcessor:
         except Exception as e:
             st.error(f"Erro ao buscar páginas relevantes com PyPDF: {e}")
             return None, None
-            
+
     def process_pdf(self) -> pd.DataFrame:
         start_page_idx, end_page_idx = self.find_relevant_pages()
         if start_page_idx is None:
@@ -817,7 +795,7 @@ class ExecutiveProcessor:
         except Exception as e:
             st.error(f"Erro ao extrair texto detalhado do PDF do Executivo: {e}")
             return pd.DataFrame()
-            
+
         dados = []
         ultima_norma = None
         seen_alteracoes = set()
@@ -843,8 +821,7 @@ class ExecutiveProcessor:
                     try:
                         partes = data_texto.split(" DE ")
                         dia = partes[0].zfill(2)
-                        # Assumindo que 'meses' é uma variável global/acessível no escopo principal
-                        mes = meses[partes[1].upper()] 
+                        mes = meses[partes[1].upper()]
                         ano = partes[2]
                         sancao = f"{dia}/{mes}/{ano}"
                     except:
@@ -909,7 +886,7 @@ class ExecutiveProcessor:
                                 "Alterações": chave_alt
                             })
         return pd.DataFrame(dados) if dados else pd.DataFrame()
-        
+
     def to_csv(self):
         df = self.process_pdf()
         if df.empty:
@@ -1111,16 +1088,16 @@ def answer_from_document(prompt_completo, api_key):
 def carregar_dicionario_termos(nome_arquivo):
     termos = []
     mapa_hierarquia = {}
-    
+
     try:
         with open(nome_arquivo, 'r', encoding='utf-8') as f:
             for line in f:
                 line = line.strip()
                 if not line or line.startswith('#'):
                     continue
-                
+
                 partes = [p.strip() for p in line.split('>') if p.strip()]
-                
+
                 if not partes:
                     continue
 
@@ -1128,20 +1105,20 @@ def carregar_dicionario_termos(nome_arquivo):
                 if termo_especifico:
                     termo_especifico = termo_especifico.replace('\t', '')
                     termos.append(termo_especifico)
-                
+
                 if len(partes) > 1:
                     termo_pai = partes[-2].replace('\t', '')
                     if termo_pai not in mapa_hierarquia:
                         mapa_hierarquia[termo_pai] = []
                     mapa_hierarquia[termo_pai].append(termo_especifico)
-                    
+
     except FileNotFoundError:
         st.error(f"Erro: O arquivo '{nome_arquivo}' não foi encontrado.")
         return [], {}
     except Exception as e:
         st.error(f"Ocorreu um erro ao carregar o dicionário de termos: {e}")
         return [], {}
-        
+
     return termos, mapa_hierarquia
 
 def carregar_exemplos_resumos(nome_arquivo):
@@ -1152,11 +1129,11 @@ def carregar_exemplos_resumos(nome_arquivo):
     if not os.path.exists(nome_arquivo):
         print(f"Aviso: Arquivo de exemplos '{nome_arquivo}' não encontrado. Usando apenas o prompt base.")
         return []
-    
+
     try:
         df = pd.read_csv(nome_arquivo)
         exemplos_formatados = []
-        
+
         for index, row in df.iterrows():
             exemplo = f"""
             --- Exemplo {index + 1} ---
@@ -1164,9 +1141,9 @@ def carregar_exemplos_resumos(nome_arquivo):
             RESUMO ESPERADO: {row['resumo_esperado']}
             """
             exemplos_formatados.append(exemplo)
-            
+
         return exemplos_formatados
-        
+
     except Exception as e:
         print(f"Erro ao carregar exemplos de resumo: {e}")
         return []
@@ -1174,18 +1151,18 @@ def carregar_exemplos_resumos(nome_arquivo):
 def aplicar_logica_hierarquia(termos_sugeridos, mapa_hierarquia):
     termos_finais = set(termos_sugeridos)
     mapa_inverso_hierarquia = {}
-    
+
     for pai, filhos in mapa_hierarquia.items():
         for filho in filhos:
             mapa_inverso_hierarquia[filho] = pai
-    
+
     termos_a_remover = set()
     for termo in termos_sugeridos:
         if termo in mapa_inverso_hierarquia:
             termo_pai = mapa_inverso_hierarquia[termo]
             if termo_pai in termos_finais:
                 termos_a_remover.add(termo_pai)
-                
+
     termos_finais = termos_finais - termos_a_remover
     return list(termos_finais)
 
@@ -1195,13 +1172,13 @@ def gerar_resumo(texto_original, exemplos_resumos):
     seguindo regras rigorosas e exemplos de Few-Shot.
     """
     api_key = get_api_key()
-    
+
     if not api_key:
         st.error("Erro: A chave de API não foi configurada.")
         return None
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
-    
+
     regras_adicionais = """
     - Mantenha o resumo em um único parágrafo, com no máximo 4 frases.
     - Use linguagem formal e evite gírias.
@@ -1225,7 +1202,7 @@ def gerar_resumo(texto_original, exemplos_resumos):
     - Todas as palavras de origem estrangeira devem ser escritas entre aspas.
     - Represente os numerais de 0 a 9 por extenso, para 10 ou mais, use apenas o algarismo.
     """
-    
+
     exemplos_prompt = "\n".join(exemplos_resumos)
     contexto_exemplos = ""
     if exemplos_prompt:
@@ -1237,17 +1214,17 @@ def gerar_resumo(texto_original, exemplos_resumos):
 
     prompt_resumo = f"""
     {contexto_exemplos}
-    
+
     # INSTRUÇÃO PRINCIPAL
     Resuma a seguinte proposição legislativa de forma clara, concisa e com as regras abaixo. Sua resposta deve ser apenas o resumo, sem cabeçalhos.
-    
+
     # Regras para o Resumo
     {regras_adicionais}
-    
+
     # Texto da Proposição a ser resumida
     {texto_original}
     """
-    
+
     payload = {
         "contents": [{"parts": [{"text": prompt_resumo}]}],
         "tools": [{"google_search": {}}]
@@ -1262,12 +1239,12 @@ def gerar_resumo(texto_original, exemplos_resumos):
         st.error(f"Erro na comunicação com a API: {http_err}")
     except Exception as e:
         st.error(f"Ocorreu um erro: {e}")
-        
+
     return "Não foi possível gerar o resumo."
 
 def gerar_termos_llm(texto_original, termos_dicionario, num_termos):
     api_key = get_api_key()
-    
+
     if not api_key:
         st.error("Erro: A chave de API não foi configurada.")
         return None
@@ -1280,10 +1257,10 @@ def gerar_termos_llm(texto_original, termos_dicionario, num_termos):
     {', '.join(termos_dicionario)}
     Se nenhum termo da lista for aplicável, a resposta deve ser uma lista JSON vazia: [].
     A resposta DEVE ser uma lista JSON de strings, sem texto adicional antes ou depois.
-    
+
     Texto da Proposição: {texto_original}
     """
-    
+
     payload = {
         "contents": [{"parts": [{"text": prompt_termos}]}],
         "tools": [{"google_search": {}}]
@@ -1293,12 +1270,12 @@ def gerar_termos_llm(texto_original, termos_dicionario, num_termos):
         response = requests.post(url, json=payload)
         response.raise_for_status()
         result = response.json()
-        
+
         json_string = result.get("candidates", [])[0].get("content", {}).get("parts", [])[0].get("text", "")
-        
+
         termos_sugeridos = []
         matches = re.findall(r'(\[.*?\])', json_string, re.DOTALL)
-        
+
         for match in matches:
             cleaned_string = match.replace("'", '"')
             try:
@@ -1308,14 +1285,14 @@ def gerar_termos_llm(texto_original, termos_dicionario, num_termos):
                     break
             except json.JSONDecodeError:
                 continue
-        
+
         return termos_sugeridos
-        
+
     except requests.exceptions.HTTPError as http_err:
         st.error(f"Erro na comunicação com a API: {http_err}")
     except Exception as e:
         st.error(f"Ocorreu um erro: {e}")
-        
+
     return []
 
 # --- Funções para Conversor de PDF em Texto (OCR) ---
@@ -1349,16 +1326,16 @@ Regras estritas:
 """
     payload = {
         "contents": [{"parts": [{"text": raw_text}]}],
-        "system_instruction": {"parts": [{"text": system_prompt}]}, 
+        "system_instruction": {"parts": [{"text": system_prompt}]},
     }
     try:
-        response = requests.post(apiUrl, 
-                                headers={'Content-Type': 'application/json'}, 
+        response = requests.post(apiUrl,
+                                headers={'Content-Type': 'application/json'},
                                 data=json.dumps(payload))
         if response.status_code == 400:
             st.error(f"Erro detalhado da API (400): {response.text}. Verifique o tamanho do PDF.")
             return raw_text
-        response.raise_for_status() 
+        response.raise_for_status()
         result = response.json()
         corrected_text = result.get("candidates", [])[0].get("content", {}).get("parts", [])[0].get("text", "")
         return corrected_text if corrected_text else raw_text
@@ -1371,7 +1348,7 @@ Regras estritas:
 # --- Função Principal da Aplicação ---
 def run_app():
     st.set_page_config(page_title="Assistente Virtual da GIL")
-    
+
     st.markdown("""
         <style>
         .title-container {
@@ -1473,7 +1450,7 @@ def run_app():
                             text += page_text + "\n"
                     text = re.sub(r"[ \t]+", " ", text)
                     text = re.sub(r"\n+", "\n", text)
-                    
+
                     with st.spinner('Extraindo dados do Diário do Legislativo...'):
                         processor = LegislativeProcessor(pdf_bytes)
                         extracted_data = processor.process_all()
@@ -1584,18 +1561,18 @@ def run_app():
         else:
             selected_file_name_display = st.selectbox("Escolha o assunto sobre o qual você quer conversar:", file_names)
             selected_file_path = DOCUMENTOS_PRE_CARREGADOS[selected_file_name_display]
-            
+
             if selected_file_name_display in PROMPTS_POR_DOCUMENTO:
                 prompt_base = PROMPTS_POR_DOCUMENTO[selected_file_name_display]
             else:
                 st.error("Erro: Não foi encontrado um prompt personalizado para este documento.")
                 prompt_base = "Responda a pergunta do usuário com base no seguinte documento: {conteudo_do_documento}. Pergunta: {pergunta_usuario}"
-            
+
             DOCUMENTO_CONTEUDO = carregar_documento_do_disco(selected_file_path)
 
             if DOCUMENTO_CONTEUDO:
                 st.success(f"Documento '{selected_file_name_display}' carregado com sucesso!")
-                
+
                 if "messages" not in st.session_state:
                     st.session_state.messages = []
 
@@ -1605,7 +1582,7 @@ def run_app():
 
                 if pergunta_usuario := st.chat_input("Faça sua pergunta:"):
                     st.session_state.messages.append({"role": "user", "content": pergunta_usuario})
-                    
+
                     with st.chat_message("user"):
                         st.markdown(pergunta_usuario)
 
@@ -1654,7 +1631,7 @@ def run_app():
             termo_dicionario.remove("Minas Gerais (MG)")
 
         texto_proposicao = st.text_area(
-            "Cole o texto da proposição aqui:", 
+            "Cole o texto da proposição aqui:",
             height=300,
             placeholder="Ex: 'A presente proposição dispõe sobre a criação de um programa de incentivo...'"
         )
@@ -1666,14 +1643,13 @@ def run_app():
                 with st.spinner('Gerando resumo e termos...'):
                     resumo_gerado = ""
                     termos_finais = []
-                    
-                    # Carregar exemplos de resumos
+
                     exemplos_resumos = carregar_exemplos_resumos("exemplos_resumos.csv")
-                    
+
                     match_doacao = re.search(r"Município de ([\w\s-]+?)(?:\s+o\simóvel|\s+os\simóveis|\s*\d)", texto_proposicao, re.IGNORECASE)
                     match_servidao = re.search(r"declara de utilidade pública,.*servidão.*no Município de ([\w\s-]+)", texto_proposicao, re.IGNORECASE | re.DOTALL)
                     match_utilidade_publica = re.search(r"declara de utilidade pública.*no Município de ([\w\s-]+)", texto_proposicao, re.IGNORECASE | re.DOTALL)
-                    
+
                     if match_doacao:
                         municipio = match_doacao.group(1).strip()
                         termos_finais = ["Doação de Imóvel", municipio]
@@ -1693,7 +1669,7 @@ def run_app():
                             resumo_gerado = "Não precisa de resumo."
 
                         termos_sugeridos_brutos = gerar_termos_llm(texto_proposicao, termo_dicionario, num_termos)
-                        
+
                         if re.search(r"institui (?:a|o) (?:política|programa) estadual|cria (?:a|o) (?:política|programa) estadual", texto_proposicao, re.IGNORECASE):
                             if termos_sugeridos_brutos is not None and "Política Pública" not in termos_sugeridos_brutos:
                                 termos_sugeridos_brutos.append("Política Pública")
@@ -1705,7 +1681,7 @@ def run_app():
 
                     st.subheader("Resumo")
                     st.markdown(f"<p style='text-align: justify;'>{resumo_gerado}</p>", unsafe_allow_html=True)
-                    
+
                     st.subheader("Termos de Indexação")
                     if termos_finais:
                         termos_str = ", ".join(termos_finais)
@@ -1715,7 +1691,7 @@ def run_app():
 
     elif opcao == "Conversor de PDF em texto (OCR)":
         OCRMypdf_PATH = shutil.which("ocrmypdf")
-        PANDOC_PATH = shutil.which("pandoc") 
+        PANDOC_PATH = shutil.which("pandoc")
 
         if not OCRMypdf_PATH or not PANDOC_PATH:
             st.error("""
@@ -1732,14 +1708,14 @@ def run_app():
 
         if uploaded_file is not None:
             st.info("Arquivo carregado com sucesso. Processando...")
-            
+
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as input_file:
                 input_file.write(uploaded_file.read())
                 input_filepath = input_file.name
 
             output_ocr_filepath = os.path.join(tempfile.gettempdir(), "output_ocr.pdf")
-            markdown_filepath = os.path.join(tempfile.gettempdir(), "texto_temporario.md") 
-            odt_filepath = os.path.join(tempfile.gettempdir(), "documento_final.odt") 
+            markdown_filepath = os.path.join(tempfile.gettempdir(), "texto_temporario.md")
+            odt_filepath = os.path.join(tempfile.gettempdir(), "documento_final.odt")
 
             try:
                 with st.spinner("1/3: Extraindo texto bruto do PDF com OCR..."):
@@ -1747,28 +1723,28 @@ def run_app():
                         OCRMypdf_PATH,
                         "--force-ocr",
                         "--sidecar",
-                        markdown_filepath, 
+                        markdown_filepath,
                         input_filepath,
                         output_ocr_filepath
                     ]
-                    
+
                     subprocess.run(command_ocr, check=True, capture_output=True, text=True)
                     st.success("Extração de texto concluída.")
 
                 if os.path.exists(markdown_filepath):
                     with open(markdown_filepath, "r") as f:
                         sidecar_text_raw = f.read()
-                    
+
                     with st.spinner("2/3: Corrigindo ortografia arcaica, removendo cabeçalhos e formatando tabelas via IA..."):
                         sidecar_text_corrected = correct_ocr_text(sidecar_text_raw)
-                    
+
                     with open(markdown_filepath, "w", encoding='utf-8') as f:
                         f.write(sidecar_text_corrected)
 
                     with st.spinner("3/3: Convertendo Markdown para arquivo ODT do LibreOffice..."):
                         command_pandoc = [
                             PANDOC_PATH,
-                            "--standalone", 
+                            "--standalone",
                             "-s",
                             markdown_filepath,
                             "-o",
@@ -1780,7 +1756,7 @@ def run_app():
                     st.markdown("---")
                     st.subheader("✅ Processo Finalizado com Sucesso")
                     st.info("O download abaixo contém o texto corrigido, com ortografia normalizada e tabelas reestruturadas, pronto para edição no LibreOffice Writer.")
-                    
+
                     with open(odt_filepath, "rb") as f:
                         st.download_button(
                             label="⬇️ Baixar Documento Formatado (.odt)",
@@ -1788,7 +1764,7 @@ def run_app():
                             file_name="documento_final_formatado.odt",
                             mime="application/vnd.oasis.opendocument.text"
                         )
-                    
+
                     st.markdown("---")
 
             except subprocess.CalledProcessError as e:
