@@ -395,6 +395,43 @@ class AdministrativeProcessor:
     def __init__(self, pdf_bytes: bytes):
         self.pdf_bytes = pdf_bytes
 
+        # --- (1) Norma publicada (já existia) ---
+        # Ex.: "PORTARIA DGE Nº 12/2026", "DELIBERAÇÃO DA MESA Nº 1/2026", etc.
+        self.norma_publicada_regex = re.compile(
+            r'(DELIBERAÇÃO DA MESA|PORTARIA DGE|ORDEM DE SERVIÇO PRES/PSEC)\s+N[º°]\s+([\d\.]+)\/(\d{4})',
+            re.IGNORECASE
+        )
+
+        # --- (2) Comandos de alteração/revogação (NOVO) ---
+        self.comandos_regex = re.compile(
+            r'(Ficam\s+revogad[oa]s?|Fica\s+revogad[oa]|'
+            r'Ficam\s+alterad[oa]s?|Fica\s+alterad[oa]|'
+            r'Ficam\s+acrescid[oa]s?|Fica\s+acrescid[oa]|'
+            r'Dá\s+nova\s+redação|Passa\s+a\s+vigorar|Passam\s+a\s+vigorar|'
+            r'Fica\s+sem\s+efeito|Ficam\s+sem\s+efeito|Torna\s+sem\s+efeito|Tornam\s+sem\s+efeito|'
+            r'Retifica)',
+            re.IGNORECASE
+        )
+
+        # --- (3) Norma citada como alvo de alteração/revogação (NOVO) ---
+        # Captura formatos como:
+        # "Portaria da Diretoria-Geral – DGE – nº 23, de 23 de julho de 2024"
+        # "Portaria DGE nº 24, de 8 de agosto de 2024"
+        # (e também permite o formato com /ANO, caso apareça)
+        self.norma_alterada_regex = re.compile(
+            r'\b('
+            r'DELIBERAÇÃO\s+DA\s+MESA|'
+            r'PORTARIA(?:\s+DA\s+DIRETORIA-GERAL\s+–\s+DGE\s+–)?\s+DGE|'
+            r'ORDEM\s+DE\s+SERVIÇO\s+PRES/PSEC'
+            r')\s*N[º°]\s*([\d\.]+)'
+            r'(?:\s*/\s*(\d{4}))?'
+            r'(?:\s*,\s*de\s*[^;\n]*?(\d{4}))?',
+            re.IGNORECASE
+        )
+
+        # --- (4) DCS (já existia) ---
+        self.regex_dcs = re.compile(r'DECIS[ÃA]O DA 1ª-SECRETARIA', re.IGNORECASE)
+
     def process_pdf(self):
         try:
             doc = fitz.open(stream=self.pdf_bytes, filetype="pdf")
@@ -403,37 +440,124 @@ class AdministrativeProcessor:
             return None
 
         resultados = []
-        regex = re.compile(
-            r'(DELIBERAÇÃO DA MESA|PORTARIA DGE|ORDEM DE SERVIÇO PRES/PSEC)\s+Nº\s+([\d\.]+)\/(\d{4})'
-        )
-        regex_dcs = re.compile(r'DECIS[ÃA]O DA 1ª-SECRETARIA')
+        ultima_norma = None
+        seen_alteracoes = set()
 
         for page in doc:
-            text = page.get_text("text")
-            text = re.sub(r'\s+', ' ', text)
-            for match in regex.finditer(text):
-                tipo_texto = match.group(1)
-                numero = match.group(2).replace('.', '')
-                ano = match.group(3)
-                sigla = {
-                    "DELIBERAÇÃO DA MESA": "DLB",
-                    "PORTARIA DGE": "PRT",
-                    "ORDEM DE SERVIÇO PRES/PSEC": "OSV"
-                }.get(tipo_texto, None)
-                if sigla:
-                    resultados.append([sigla, numero, ano])
-            if regex_dcs.search(text):
-                resultados.append(["DCS", "", ""])
+            text = page.get_text("text") or ""
+            # normaliza espaços, mas mantém pontuação e quebras relevantes no máximo possível
+            text = re.sub(r'\s+', ' ', text).strip()
+            if not text:
+                continue
+
+            # --- Eventos (como no Executivo): norma publicada e comandos ---
+            eventos = []
+            for m in self.norma_publicada_regex.finditer(text):
+                eventos.append(("published", m.start(), m))
+            for c in self.comandos_regex.finditer(text):
+                eventos.append(("command", c.start(), c))
+            eventos.sort(key=lambda e: e[1])
+
+            for tipo_ev, pos_ev, match_obj in eventos:
+                if tipo_ev == "published":
+                    tipo_texto = match_obj.group(1).upper()
+                    numero = match_obj.group(2).replace('.', '')
+                    ano = match_obj.group(3)
+
+                    sigla = {
+                        "DELIBERAÇÃO DA MESA": "DLB",
+                        "PORTARIA DGE": "PRT",
+                        "ORDEM DE SERVIÇO PRES/PSEC": "OSV"
+                    }.get(tipo_texto, None)
+
+                    if sigla:
+                        linha = {
+                            "Sigla": sigla,
+                            "Número": numero,
+                            "Ano": ano,
+                            "Alterações": ""
+                        }
+                        resultados.append(linha)
+                        ultima_norma = linha
+                        seen_alteracoes = set()
+
+                elif tipo_ev == "command":
+                    if ultima_norma is None:
+                        continue
+
+                    comando_txt = match_obj.group(0).lower()
+
+                    # janela de contexto maior para capturar lista (I, II, III, ...)
+                    # aqui privilegiamos o "para frente" porque no exemplo a lista vem depois do comando
+                    start_block = max(0, pos_ev - 80)
+                    end_block = min(len(text), pos_ev + 1200)
+                    bloco = text[start_block:end_block]
+
+                    alteracoes_para_processar = []
+
+                    # Se for "revoga"/"sem efeito"/etc., pegamos TODAS as normas citadas no bloco
+                    if ("revogad" in comando_txt) or ("sem efeito" in comando_txt):
+                        alteracoes_para_processar = list(self.norma_alterada_regex.finditer(bloco))
+                    else:
+                        # Para outros comandos, escolhe o alvo mais próximo (mesma regra do Executivo)
+                        candidatas = list(self.norma_alterada_regex.finditer(bloco))
+                        if candidatas:
+                            pos_comando_no_bloco = pos_ev - start_block
+                            melhor = min(candidatas, key=lambda m: abs(m.start() - pos_comando_no_bloco))
+                            alteracoes_para_processar = [melhor]
+
+                    for alt in alteracoes_para_processar:
+                        tipo_alt_raw = alt.group(1).upper().strip()
+                        num_alt = alt.group(2).replace(".", "").replace(" ", "")
+                        ano_alt = alt.group(3) or alt.group(4) or ""
+
+                        # normaliza o "tipo" para sigla de saída (como você já faz no publicado)
+                        if "DELIBERAÇÃO" in tipo_alt_raw:
+                            sigla_alt = "DLB"
+                        elif "PORTARIA" in tipo_alt_raw:
+                            sigla_alt = "PRT"
+                        elif "ORDEM DE SERVIÇO" in tipo_alt_raw:
+                            sigla_alt = "OSV"
+                        else:
+                            sigla_alt = tipo_alt_raw
+
+                        # evita auto-referência (a própria norma publicada)
+                        if sigla_alt == ultima_norma["Sigla"] and num_alt == ultima_norma["Número"] and (not ano_alt or ano_alt == ultima_norma["Ano"]):
+                            continue
+
+                        chave_alt = f"{sigla_alt} {num_alt}" + (f" {ano_alt}" if ano_alt else "")
+                        if chave_alt in seen_alteracoes:
+                            continue
+                        seen_alteracoes.add(chave_alt)
+
+                        if ultima_norma["Alterações"] == "":
+                            ultima_norma["Alterações"] = chave_alt
+                        else:
+                            # mesma lógica do Executivo: linha extra só com Alterações
+                            resultados.append({
+                                "Sigla": "",
+                                "Número": "",
+                                "Ano": "",
+                                "Alterações": chave_alt
+                            })
+
+            # DCS (mantém regra original)
+            if self.regex_dcs.search(text):
+                resultados.append({"Sigla": "DCS", "Número": "", "Ano": "", "Alterações": ""})
+
         doc.close()
-        return pd.DataFrame(resultados, columns=['Sigla', 'Número', 'Ano'])
+
+        # Agora a aba/CSV de "normas" do Administrativo vem com "Alterações"
+        return pd.DataFrame(resultados, columns=['Sigla', 'Número', 'Ano', 'Alterações'])
 
     def to_csv(self):
         df = self.process_pdf()
-        if df.empty:
+        if df is None or df.empty:
             return None
         output_csv = io.StringIO()
         df.to_csv(output_csv, index=False, encoding="utf-8-sig")
         return output_csv.getvalue().encode('utf-8')
+
 
 class ExecutiveProcessor:
     def __init__(self, pdf_bytes: bytes):
