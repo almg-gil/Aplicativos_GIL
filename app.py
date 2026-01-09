@@ -71,45 +71,69 @@ def classify_req(segment: str) -> str:
 
 # --- Classes de Processamento para Extrator de Diários Oficiais ---
 class LegislativeProcessor:
-    def __init__(self, text: str):
-        self.text = text
+    def __init__(self, pdf_bytes: bytes):
+        self.pdf_bytes = pdf_bytes
+
+        # Extrai texto por página (como no Administrativo), monta texto único e mapa de offsets -> página
+        reader = pypdf.PdfReader(io.BytesIO(self.pdf_bytes))
+
+        page_texts = []
+        for page in reader.pages:
+            page_texts.append(page.extract_text() or "")
+
+        self._offsets = []  # lista de tuplas (start, end, page_number)
+        parts = []
+        cursor = 0
+        for idx, pt in enumerate(page_texts, start=1):
+            parts.append(pt + "\n")
+            end = cursor + len(pt) + 1
+            self._offsets.append((cursor, end, idx))
+            cursor = end
+
+        full_text = "".join(parts)
+
+        # normalizações iguais às que você já fazia no app
+        full_text = re.sub(r"[ \t]+", " ", full_text)
+        full_text = re.sub(r"\n+", "\n", full_text)
+
+        # IMPORTANTÍSSIMO: self.text agora é str (para não quebrar regex)
+        self.text = full_text
+
+    def _pagina_from_pos(self, pos: int) -> str:
+        for start, end, pnum in self._offsets:
+            if start <= pos < end:
+                return str(pnum)
+        return ""
 
     def process_normas(self) -> pd.DataFrame:
-        # (0) Pré-normalização: garante 1 linha por epígrafe + normaliza espaços
-        txt = self.text or ""
-        txt = re.sub(r"[ \t]+", " ", txt)
-        txt = re.sub(r"\n+", "\n", txt)
-
-        # (1) Padrão da epígrafe (mesmo de antes)
         pattern = re.compile(
-            r"^(LEI COMPLEMENTAR|LEI|RESOLUÇÃO|EMENDA À CONSTITUIÇÃO|DELIBERAÇÃO DA MESA) Nº (\d{1,5}(?:\.\d{0,3})?)"
-            r"(?:/(\d{4}))?(?:, DE .+ DE (\d{4}))?$",
+            r"^(LEI COMPLEMENTAR|LEI|RESOLUÇÃO|EMENDA À CONSTITUIÇÃO|DELIBERAÇÃO DA MESA) Nº (\d{1,5}(?:\.\d{0,3})?)(?:/(\d{4}))?(?:, DE .+ DE (\d{4}))?$",
             re.MULTILINE
         )
 
-        # (2) Tenta capturar a data dentro da própria linha (quando existir)
-        # Ex.: "..., DE 12 DE MAIO DE 2024"  -> 12/05/2024
+        # Captura data na própria epígrafe quando existir: "... DE 15 DE DEZEMBRO DE 2025"
         data_na_epigrafe_regex = re.compile(
             r"\bDE\s+(\d{1,2})\s+DE\s+([A-ZÇÃÁÉÍÓÔÚ]+)\s+DE\s+(\d{4})\b",
             re.IGNORECASE
         )
+
         meses_leg = {
-            "JANEIRO": "01", "FEVEREIRO": "02", "FEVEREIRO": "02", "MARÇO": "03", "MARCO": "03",
+            "JANEIRO": "01", "FEVEREIRO": "02", "MARÇO": "03", "MARCO": "03",
             "ABRIL": "04", "MAIO": "05", "JUNHO": "06", "JULHO": "07",
-            "AGOSTO": "08", "SETEMBRO": "09", "OUTUBRO": "10", "NOVEMBRO": "11", "DEZEMBRO": "12",
+            "AGOSTO": "08", "SETEMBRO": "09", "OUTUBRO": "10", "NOVEMBRO": "11", "DEZEMBRO": "12"
         }
 
-        # (3) Página/Coluna: não existem no texto corrido.
-        # Mantém o padrão do AdministrativeProcessor: Coluna sempre 1; Página vazio.
         normas = []
-        for match in pattern.finditer(txt):
+        for match in pattern.finditer(self.text):
             tipo_extenso = match.group(1)
             numero_raw = match.group(2).replace(".", "")
             ano = match.group(3) if match.group(3) else match.group(4)
             if not ano:
                 continue
 
-            # tenta data na própria epígrafe (se houver)
+            pagina = self._pagina_from_pos(match.start())
+            coluna = 1  # como você definiu (sempre 1)
+
             sancao = ""
             linha_epigrafe = match.group(0) or ""
             dm = data_na_epigrafe_regex.search(linha_epigrafe)
@@ -122,15 +146,7 @@ class LegislativeProcessor:
                     sancao = f"{dia}/{mes}/{ano_data}"
 
             sigla = TIPO_MAP_NORMA[tipo_extenso]
-
-            normas.append([
-                "",      # Página (não disponível no texto)
-                1,       # Coluna (sempre 1, como no Administrativo)
-                sancao,  # Sanção/Data (quando existir na epígrafe)
-                sigla,
-                numero_raw,
-                ano
-            ])
+            normas.append([pagina, coluna, sancao, sigla, numero_raw, ano])
 
         return pd.DataFrame(normas, columns=['Página', 'Coluna', 'Sanção', 'Sigla', 'Número', 'Ano'])
 
@@ -195,27 +211,20 @@ class LegislativeProcessor:
 
         reqs_to_ignore = set()
 
-        # Coleta de ignore: Ofício
         for match in ignore_officio_pattern.finditer(self.text):
             num_part = match.group(1).replace('.', '')
             ano = match.group(2)
             reqs_to_ignore.add(f"{num_part}/{ano}")
 
-        # Coleta de ignore: Anexe-se
         for match in ignore_anexese_pattern.finditer(self.text):
             num_part = match.group(1).replace('.', '')
             ano = match.group(2)
             reqs_to_ignore.add(f"{num_part}/{ano}")
 
-        # Coleta de ignore: relativas / referentes / informações relativas
         for match in ignore_relativas_pattern.finditer(self.text):
             num_part = match.group(1).replace('.', '')
             ano = match.group(2)
             reqs_to_ignore.add(f"{num_part}/{ano}")
-
-        # -----------------------------------------
-        # PADRÕES DE RECOLHIMENTO NORMAL
-        # -----------------------------------------
 
         ignore_pattern = re.compile(
             r"Ofício nº .*?,.*?relativas ao Requerimento\s*nº (\d{1,4}\.?\d{0,3}/\d{4})",
