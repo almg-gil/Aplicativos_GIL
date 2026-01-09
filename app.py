@@ -414,6 +414,13 @@ class AdministrativeProcessor:
             re.IGNORECASE
         )
 
+        # --- (2c) Gatilho para "sem efeito" (NOVO) ---
+        # Ex.: "Fica sem efeito ... previsto na Portaria ... nº 58, de ... 2025 ..."
+        self.sem_efeito_regex = re.compile(
+            r'\bFic(?:a|am)\s+sem\s+efeito\b|\bTorn(?:a|am)\s+sem\s+efeito\b',
+            re.IGNORECASE
+        )
+
         # --- (3) Terminadores estruturais: próximo Art. / Artigo / nova norma publicada ---
         self.fim_lista_revogacoes_regex = re.compile(
             r'\bArt\.\s*\d+º?\b|\bArtigo\s+\d+º?\b',
@@ -421,11 +428,6 @@ class AdministrativeProcessor:
         )
 
         # --- (4) Norma alvo (revogada/alterada) — tolerante a hífen/travessão ---
-        # AJUSTE PRINCIPAL:
-        # - Aceita:
-        #   "Portaria DGE nº 9, de ... 2025"
-        #   "Portaria da Diretoria-Geral – DGE – nº 9, de ... 2025"
-        # - O "DGE" final agora é OPCIONAL (porque, na segunda forma, ele já aparece antes do nº)
         dash = r'[–—-]'
         self.norma_alterada_regex = re.compile(
             rf'\b('
@@ -519,7 +521,7 @@ class AdministrativeProcessor:
             if not text:
                 continue
 
-            # (A) Se já estava capturando, concatena e tenta fechar por terminador estrutural
+            # (A) Se já estava capturando lista longa, concatena e fecha por terminador estrutural
             if capturando_revogacoes:
                 buffer_revogacoes += " " + text
                 fim_idx = _achar_fim_lista(buffer_revogacoes)
@@ -547,7 +549,7 @@ class AdministrativeProcessor:
                     ultima_norma = linha
                     seen_alteracoes = set()
 
-            # (C) Lista longa de revogações
+            # (C) Lista longa de revogações (caput)
             caput_match = self.revogacoes_caput_regex.search(text)
             if caput_match and ultima_norma is not None:
                 buffer_revogacoes = text[caput_match.end():].strip()
@@ -561,10 +563,20 @@ class AdministrativeProcessor:
                 else:
                     capturando_revogacoes = True
 
-            # (C2) Revogação simples (ex.: "Fica revogada a Portaria ... nº 9, de ... 2025")
+            # (C2) Revogação simples
             sim_match = self.revogacao_simples_regex.search(text)
             if sim_match and ultima_norma is not None:
                 trecho = text[sim_match.start():].strip()
+                fim_idx = _achar_fim_lista(trecho)
+                if fim_idx is not None:
+                    trecho = trecho[:fim_idx]
+                _extrair_alteracoes_do_segmento(trecho)
+
+            # (C3) NOVO: "Fica(m)/Torna(m) sem efeito ..." (captura norma referida no mesmo período)
+            sem_match = self.sem_efeito_regex.search(text)
+            if sem_match and ultima_norma is not None:
+                # Captura do "sem efeito" até o terminador estrutural, se houver
+                trecho = text[sem_match.start():].strip()
                 fim_idx = _achar_fim_lista(trecho)
                 if fim_idx is not None:
                     trecho = trecho[:fim_idx]
@@ -583,7 +595,8 @@ class AdministrativeProcessor:
             return None
         output_csv = io.StringIO()
         df.to_csv(output_csv, index=False, encoding="utf-8-sig")
-        return output_csv.getvalue().encode('utf-8')
+        return output_csv.getvalue().encode('utf-8-sig')
+
 
 
 
