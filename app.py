@@ -1469,7 +1469,7 @@ def run_app():
                     text = re.sub(r"\n+", "\n", text)
                     
                     with st.spinner('Extraindo dados do Diário do Legislativo...'):
-                        processor = LegislativeProcessor(text)
+                        processor = LegislativeProcessor(pdf_bytes)
                         extracted_data = processor.process_all()
 
                         output = io.BytesIO()
