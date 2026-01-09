@@ -75,20 +75,64 @@ class LegislativeProcessor:
         self.text = text
 
     def process_normas(self) -> pd.DataFrame:
+        # (0) Pré-normalização: garante 1 linha por epígrafe + normaliza espaços
+        txt = self.text or ""
+        txt = re.sub(r"[ \t]+", " ", txt)
+        txt = re.sub(r"\n+", "\n", txt)
+
+        # (1) Padrão da epígrafe (mesmo de antes)
         pattern = re.compile(
-            r"^(LEI COMPLEMENTAR|LEI|RESOLUÇÃO|EMENDA À CONSTITUIÇÃO|DELIBERAÇÃO DA MESA) Nº (\d{1,5}(?:\.\d{0,3})?)(?:/(\d{4}))?(?:, DE .+ DE (\d{4}))?$",
+            r"^(LEI COMPLEMENTAR|LEI|RESOLUÇÃO|EMENDA À CONSTITUIÇÃO|DELIBERAÇÃO DA MESA) Nº (\d{1,5}(?:\.\d{0,3})?)"
+            r"(?:/(\d{4}))?(?:, DE .+ DE (\d{4}))?$",
             re.MULTILINE
         )
+
+        # (2) Tenta capturar a data dentro da própria linha (quando existir)
+        # Ex.: "..., DE 12 DE MAIO DE 2024"  -> 12/05/2024
+        data_na_epigrafe_regex = re.compile(
+            r"\bDE\s+(\d{1,2})\s+DE\s+([A-ZÇÃÁÉÍÓÔÚ]+)\s+DE\s+(\d{4})\b",
+            re.IGNORECASE
+        )
+        meses_leg = {
+            "JANEIRO": "01", "FEVEREIRO": "02", "FEVEREIRO": "02", "MARÇO": "03", "MARCO": "03",
+            "ABRIL": "04", "MAIO": "05", "JUNHO": "06", "JULHO": "07",
+            "AGOSTO": "08", "SETEMBRO": "09", "OUTUBRO": "10", "NOVEMBRO": "11", "DEZEMBRO": "12",
+        }
+
+        # (3) Página/Coluna: não existem no texto corrido.
+        # Mantém o padrão do AdministrativeProcessor: Coluna sempre 1; Página vazio.
         normas = []
-        for match in pattern.finditer(self.text):
+        for match in pattern.finditer(txt):
             tipo_extenso = match.group(1)
             numero_raw = match.group(2).replace(".", "")
             ano = match.group(3) if match.group(3) else match.group(4)
             if not ano:
                 continue
+
+            # tenta data na própria epígrafe (se houver)
+            sancao = ""
+            linha_epigrafe = match.group(0) or ""
+            dm = data_na_epigrafe_regex.search(linha_epigrafe)
+            if dm:
+                dia = (dm.group(1) or "").zfill(2)
+                mes_nome = (dm.group(2) or "").upper().strip()
+                mes = meses_leg.get(mes_nome, "")
+                ano_data = (dm.group(3) or "").strip()
+                if mes:
+                    sancao = f"{dia}/{mes}/{ano_data}"
+
             sigla = TIPO_MAP_NORMA[tipo_extenso]
-            normas.append([sigla, numero_raw, ano])
-        return pd.DataFrame(normas, columns=['Sigla', 'Número', 'Ano'])
+
+            normas.append([
+                "",      # Página (não disponível no texto)
+                1,       # Coluna (sempre 1, como no Administrativo)
+                sancao,  # Sanção/Data (quando existir na epígrafe)
+                sigla,
+                numero_raw,
+                ano
+            ])
+
+        return pd.DataFrame(normas, columns=['Página', 'Coluna', 'Sanção', 'Sigla', 'Número', 'Ano'])
 
     def process_proposicoes(self) -> pd.DataFrame:
         pattern_prop = re.compile(
@@ -292,7 +336,6 @@ class LegislativeProcessor:
 
         return pd.DataFrame(unique_reqs, columns=['Sigla', 'Número', 'Ano', 'Coluna4', 'Coluna5', 'Classificação'])
 
-
     def process_pareceres(self) -> pd.DataFrame:
         found_projects = {}
         pareceres_start_pattern = re.compile(r"TRAMITAÇÃO DE PROPOSIÇÕES")
@@ -390,7 +433,6 @@ class LegislativeProcessor:
             "Requerimentos": df_requerimentos,
             "Pareceres": df_pareceres
         }
-
 class AdministrativeProcessor:
     def __init__(self, pdf_bytes: bytes):
         self.pdf_bytes = pdf_bytes
