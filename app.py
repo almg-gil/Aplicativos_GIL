@@ -421,22 +421,23 @@ class AdministrativeProcessor:
             re.IGNORECASE
         )
 
+        # --- NOVO: gatilho para alteração de redação ("passa a vigorar", "passam a vigorar", etc.) ---
+        self.redacao_regex = re.compile(
+            r'\bpassa\s+a\s+vigorar\b|\bpassam\s+a\s+vigorar\b|\bpassa\s+a\s+vigorar\s+com\s+a\s+seguinte\s+reda[cç][aã]o\b',
+            re.IGNORECASE
+        )
+
         dash = r'[–—-]'
         self.fim_lista_revogacoes_regex = re.compile(
             rf'\bArt\.\s*\d+º?\s*{dash}\s*|\bArtigo\s+\d+º?\s*{dash}\s*',
             re.IGNORECASE
         )
 
-        # --- AJUSTE AQUI: "Portaria da Diretoria-Geral nº ..." também deve casar ---
-        # Aceita:
-        # - Portaria da Diretoria-Geral nº 48, de ... 2017
-        # - Portaria da Diretoria-Geral – DGE – nº 48, de ... 2017
-        # - Portaria DGE nº 48, de ... 2017
-        # - Portaria nº 48, de ... 2017
         self.norma_alterada_regex = re.compile(
             rf'\b('
             rf'DELIBERAÇÃO\s+DA\s+MESA|'
             rf'PORTARIA(?:\s+DA\s+DIRETORIA-GERAL(?:\s*{dash}\s*DGE\s*{dash})?)?(?:\s*DGE)?|'
+            rf'PORTARIA|'
             rf'ORDEM\s+DE\s+SERVIÇO\s+PRES/PSEC'
             rf')\s*N[º°]\s*([\d\.]+)'
             rf'(?:\s*/\s*(\d{{4}}))?'
@@ -561,6 +562,7 @@ class AdministrativeProcessor:
                 else:
                     capturando_revogacoes = True
 
+            # Revogação simples
             sim_match = self.revogacao_simples_regex.search(text)
             if sim_match and ultima_norma is not None:
                 trecho = text[sim_match.start():].strip()
@@ -569,6 +571,7 @@ class AdministrativeProcessor:
                     trecho = trecho[:fim_idx]
                 _extrair_alteracoes_do_segmento(trecho)
 
+            # Sem efeito
             sem_match = self.sem_efeito_regex.search(text)
             if sem_match and ultima_norma is not None:
                 trecho = text[sem_match.start():].strip()
@@ -577,12 +580,26 @@ class AdministrativeProcessor:
                     trecho = trecho[:fim_idx]
                 _extrair_alteracoes_do_segmento(trecho)
 
+            # Prorrogação
             pror_match = self.prorrogacao_regex.search(text)
             if pror_match and ultima_norma is not None:
                 trecho = text[pror_match.start():].strip()
                 fim_idx = _achar_fim_lista(trecho)
                 if fim_idx is not None:
                     trecho = trecho[:fim_idx]
+                _extrair_alteracoes_do_segmento(trecho)
+
+            # --- NOVO: Alteração de redação / "passa a vigorar ..." ---
+            red_match = self.redacao_regex.search(text)
+            if red_match and ultima_norma is not None:
+                # Para esse caso, a referência à Portaria costuma vir ANTES do "passa a vigorar".
+                # Então analisamos uma janela para trás + para frente do gatilho.
+                start = max(0, red_match.start() - 400)
+                end = min(len(text), red_match.end() + 600)
+                trecho = text[start:end]
+
+                # Não usar _achar_fim_lista aqui, pois "caput do art. 1º" pode cortar.
+                # Apenas extraímos as normas do trecho.
                 _extrair_alteracoes_do_segmento(trecho)
 
             if self.regex_dcs.search(text):
