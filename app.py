@@ -443,16 +443,35 @@ class AdministrativeProcessor:
         )
 
         # --- (4) Norma alvo (revogada/alterada) ---
-        # AJUSTE AQUI: aceitar também:
-        # - "Portaria da Presidência e da Diretoria-Geral nº ..."
-        # - "Ordem de Serviço da Presidência e da 1ª-Secretaria nº ..."
-        # Além das formas já existentes.
+        # AJUSTE AQUI:
+        # - Portaria da 1ª-Secretaria – Psec – e da Diretoria-Geral – DGE – nº ...
+        # - Portaria Psec/DGE nº ...
+        # - (mantém as anteriores)
         self.norma_alterada_regex = re.compile(
             rf'\b('
             rf'DELIBERAÇÃO\s+DA\s+MESA|'
-            rf'PORTARIA(?:\s+DA\s+DIRETORIA-GERAL(?:\s*{dash}\s*DGE\s*{dash})?)?(?:\s*DGE)?|'
-            rf'PORTARIA\s+DA\s+PRESID[ÊE]NCIA\s+E\s+DA\s+DIRETORIA-GERAL|'
-            rf'PORTARIA|'
+
+            # Portaria "institucional" (variações)
+            rf'PORTARIA'
+            rf'(?:'
+                rf'\s+DA\s+PRESID[ÊE]NCIA\s+E\s+DA\s+DIRETORIA-GERAL'
+                rf'|'
+                rf'\s+DA\s+1ª-SECRETARIA\s*{dash}\s*PSEC\s*{dash}\s*E\s+DA\s+DIRETORIA-GERAL\s*{dash}\s*DGE\s*{dash}'
+                rf'|'
+                rf'\s+DA\s+DIRETORIA-GERAL(?:\s*{dash}\s*DGE\s*{dash})?'
+                rf'|'
+                rf'\s*PSEC\s*/\s*DGE'
+                rf'|'
+                rf'\s*PRES\s*/\s*DGE'
+                rf'|'
+                rf'\s*PRES\s*/\s*PSEC'
+                rf'|'
+                rf'\s*DGE'
+            rf')?'
+
+            rf'|'
+
+            # Ordem de Serviço (variações)
             rf'ORDEM\s+DE\s+SERVI[ÇC]O\s+PRES/PSEC|'
             rf'ORDEM\s+DE\s+SERVI[ÇC]O\s+DA\s+PRESID[ÊE]NCIA\s+E\s+DA\s+1ª-SECRETARIA|'
             rf'ORDEM\s+DE\s+SERVI[ÇC]O'
