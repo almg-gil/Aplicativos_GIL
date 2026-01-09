@@ -395,12 +395,7 @@ class AdministrativeProcessor:
     def __init__(self, pdf_bytes: bytes):
         self.pdf_bytes = pdf_bytes
 
-        # --- (1) Norma publicada (AJUSTADO: aceita PORTARIA DGE, PSEC/DGE, PRES/DGE, PRES/PSEC) ---
-        # Exemplos que devem casar:
-        # - PORTARIA DGE Nº 23/2024
-        # - PORTARIA PSEC/DGE Nº 67/2025
-        # - PORTARIA PRES/DGE Nº 10/2025
-        # - PORTARIA PRES/PSEC Nº 5/2025
+        # --- (1) Norma publicada (PORTARIA DGE / PSEC-DGE / PRES-DGE / PRES-PSEC) ---
         self.norma_publicada_regex = re.compile(
             r'(DELIBERAÇÃO DA MESA|'
             r'PORTARIA\s+(?:DGE|PSEC\s*/\s*DGE|PRES\s*/\s*DGE|PRES\s*/\s*PSEC)|'
@@ -415,52 +410,58 @@ class AdministrativeProcessor:
             re.IGNORECASE
         )
 
-        # --- (2b) Gatilho para revogação "simples" ---
+        # --- (2b) Revogação simples ---
         self.revogacao_simples_regex = re.compile(
             r'\bFic(?:a|am)\s+revogad(?:a|o|as|os)\b',
             re.IGNORECASE
         )
 
-        # --- (2c) Gatilho para "sem efeito" ---
+        # --- (2c) "Sem efeito" ---
         self.sem_efeito_regex = re.compile(
             r'\bFic(?:a|am)\s+sem\s+efeito\b|\bTorn(?:a|am)\s+sem\s+efeito\b',
             re.IGNORECASE
         )
 
-        # --- (2d) Gatilho para "prorrogação" ---
+        # --- (2d) "Prorrogação" ---
         self.prorrogacao_regex = re.compile(
             r'\bFic(?:a|am)\s+prorrogad(?:a|o|as|os)\b',
             re.IGNORECASE
         )
 
-        # --- (2e) Gatilho para alteração de redação ("passa a vigorar", etc.) ---
+        # --- (2e) "Passa a vigorar" ---
         self.redacao_regex = re.compile(
             r'\bpassa\s+a\s+vigorar\b|\bpassam\s+a\s+vigorar\b|\bpassa\s+a\s+vigorar\s+com\s+a\s+seguinte\s+reda[cç][aã]o\b',
             re.IGNORECASE
         )
 
-        # --- (3) Terminadores estruturais: cabeçalho de artigo ---
         dash = r'[–—-]'
+
+        # --- (3) Terminadores estruturais: cabeçalho de artigo ---
         self.fim_lista_revogacoes_regex = re.compile(
             rf'\bArt\.\s*\d+º?\s*{dash}\s*|\bArtigo\s+\d+º?\s*{dash}\s*',
             re.IGNORECASE
         )
 
-        # --- (4) Norma alvo (revogada/alterada) — tolerante a variações ---
-        # (mantém o que você já vinha usando)
+        # --- (4) Norma alvo (revogada/alterada) ---
+        # AJUSTE AQUI: aceitar também:
+        # - "Portaria da Presidência e da Diretoria-Geral nº ..."
+        # - "Ordem de Serviço da Presidência e da 1ª-Secretaria nº ..."
+        # Além das formas já existentes.
         self.norma_alterada_regex = re.compile(
             rf'\b('
             rf'DELIBERAÇÃO\s+DA\s+MESA|'
             rf'PORTARIA(?:\s+DA\s+DIRETORIA-GERAL(?:\s*{dash}\s*DGE\s*{dash})?)?(?:\s*DGE)?|'
+            rf'PORTARIA\s+DA\s+PRESID[ÊE]NCIA\s+E\s+DA\s+DIRETORIA-GERAL|'
             rf'PORTARIA|'
-            rf'ORDEM\s+DE\s+SERVIÇO\s+PRES/PSEC'
+            rf'ORDEM\s+DE\s+SERVI[ÇC]O\s+PRES/PSEC|'
+            rf'ORDEM\s+DE\s+SERVI[ÇC]O\s+DA\s+PRESID[ÊE]NCIA\s+E\s+DA\s+1ª-SECRETARIA|'
+            rf'ORDEM\s+DE\s+SERVI[ÇC]O'
             rf')\s*N[º°]\s*([\d\.]+)'
             rf'(?:\s*/\s*(\d{{4}}))?'
             rf'(?:\s*,\s*de\s*[^;\.]*?(\d{{4}}))?',
             re.IGNORECASE
         )
 
-        # --- (5) DCS ---
         self.regex_dcs = re.compile(r'DECIS[ÃA]O DA 1ª-SECRETARIA', re.IGNORECASE)
 
     def process_pdf(self):
@@ -483,7 +484,7 @@ class AdministrativeProcessor:
                 return "DLB"
             if "PORTARIA" in t:
                 return "PRT"
-            if "ORDEM DE SERVIÇO" in t:
+            if "ORDEM DE SERVI" in t:
                 return "OSV"
             return t.strip()
 
@@ -549,11 +550,11 @@ class AdministrativeProcessor:
                     capturando_revogacoes = False
                     buffer_revogacoes = ""
 
-            # (B) Normas publicadas (AGORA COM PORTARIA PSEC/DGE, PRES/DGE, PRES/PSEC)
+            # (B) Normas publicadas
             for m in self.norma_publicada_regex.finditer(text):
                 tipo_texto = (m.group(1) or "").upper().strip()
                 tipo_texto_norm = re.sub(r'\s+', ' ', tipo_texto)
-                tipo_texto_norm = re.sub(r'\s*/\s*', '/', tipo_texto_norm)  # normaliza " / " -> "/"
+                tipo_texto_norm = re.sub(r'\s*/\s*', '/', tipo_texto_norm)
 
                 numero = (m.group(2) or "").replace('.', '')
                 ano = (m.group(3) or "").strip()
@@ -573,11 +574,10 @@ class AdministrativeProcessor:
                     ultima_norma = linha
                     seen_alteracoes = set()
 
-            # (C) Lista longa de revogações (caput)
+            # (C) Lista longa de revogações
             caput_match = self.revogacoes_caput_regex.search(text)
             if caput_match and ultima_norma is not None:
                 buffer_revogacoes = text[caput_match.end():].strip()
-
                 fim_idx = _achar_fim_lista(buffer_revogacoes)
                 if fim_idx is not None:
                     segmento = buffer_revogacoes[:fim_idx]
@@ -614,7 +614,7 @@ class AdministrativeProcessor:
                     trecho = trecho[:fim_idx]
                 _extrair_alteracoes_do_segmento(trecho)
 
-            # (C5) Alteração de redação / "passa a vigorar ..."
+            # (C5) Redação / "passa a vigorar"
             red_match = self.redacao_regex.search(text)
             if red_match and ultima_norma is not None:
                 start = max(0, red_match.start() - 400)
