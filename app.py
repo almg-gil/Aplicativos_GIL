@@ -408,6 +408,13 @@ class AdministrativeProcessor:
             re.IGNORECASE
         )
 
+        # --- (2b) Gatilho para revogação "simples" (NOVA) ---
+        # Ex.: "Fica revogada a Portaria ...", "Fica revogado o ...", "Ficam revogadas ...", "Ficam revogados ..."
+        self.revogacao_simples_regex = re.compile(
+            r'\bFic(?:a|am)\s+revogad(?:a|o|as|os)\b',
+            re.IGNORECASE
+        )
+
         # --- (3) Terminadores estruturais: próximo Art. / Artigo / nova norma publicada ---
         self.fim_lista_revogacoes_regex = re.compile(
             r'\bArt\.\s*\d+º?\b|\bArtigo\s+\d+º?\b',
@@ -543,7 +550,7 @@ class AdministrativeProcessor:
                     ultima_norma = linha
                     seen_alteracoes = set()
 
-            # (C) Detecta o caput de revogação e inicia (ou finaliza) a captura
+            # (C) Detecta o caput de revogação (lista) e inicia (ou finaliza) a captura
             caput_match = self.revogacoes_caput_regex.search(text)
             if caput_match and ultima_norma is not None:
                 buffer_revogacoes = text[caput_match.end():].strip()
@@ -556,6 +563,22 @@ class AdministrativeProcessor:
                     buffer_revogacoes = ""
                 else:
                     capturando_revogacoes = True
+
+            # (C2) NOVO: revogação "simples" dentro de um artigo (sem lista)
+            # Ex.: "Art. 3º – Fica revogada a Portaria ... nº 9, de ... 2025, ..."
+            # Estratégia: ao encontrar "Fica(m) revogado(s/a/as/os)", extrai um trecho à frente
+            # até o próximo "Art." / nova norma publicada, e captura as normas dentro desse trecho.
+            sim_match = self.revogacao_simples_regex.search(text)
+            if sim_match and ultima_norma is not None:
+                # Pega a partir do comando de revogação
+                trecho = text[sim_match.start():].strip()
+
+                fim_idx = _achar_fim_lista(trecho)
+                if fim_idx is not None:
+                    trecho = trecho[:fim_idx]
+
+                # Captura norma(s) revogada(s) dentro do trecho
+                _extrair_alteracoes_do_segmento(trecho)
 
             # (D) DCS (mantém regra original)
             if self.regex_dcs.search(text):
@@ -571,7 +594,8 @@ class AdministrativeProcessor:
             return None
         output_csv = io.StringIO()
         df.to_csv(output_csv, index=False, encoding="utf-8-sig")
-        return output_csv.getvalue().encode('utf-8')
+        return output_csv.getvalue().encode('utf-8-sig')
+
 
 
 
