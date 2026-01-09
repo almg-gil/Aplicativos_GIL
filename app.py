@@ -414,10 +414,16 @@ class AdministrativeProcessor:
             re.IGNORECASE
         )
 
-        # --- (2c) Gatilho para "sem efeito" (NOVO) ---
-        # Ex.: "Fica sem efeito ... previsto na Portaria ... nº 58, de ... 2025 ..."
+        # --- (2c) Gatilho para "sem efeito" ---
         self.sem_efeito_regex = re.compile(
             r'\bFic(?:a|am)\s+sem\s+efeito\b|\bTorn(?:a|am)\s+sem\s+efeito\b',
+            re.IGNORECASE
+        )
+
+        # --- (2d) NOVO: gatilho para "prorrogação" (prorroga prazo previsto em norma) ---
+        # Ex.: "Fica prorrogado ... o prazo previsto ... da Portaria nº 46, de ... 2025."
+        self.prorrogacao_regex = re.compile(
+            r'\bFic(?:a|am)\s+prorrogad(?:a|o|as|os)\b',
             re.IGNORECASE
         )
 
@@ -428,11 +434,13 @@ class AdministrativeProcessor:
         )
 
         # --- (4) Norma alvo (revogada/alterada) — tolerante a hífen/travessão ---
+        # AJUSTE AQUI: aceitar também "PORTARIA Nº 46" (sem DGE)
         dash = r'[–—-]'
         self.norma_alterada_regex = re.compile(
             rf'\b('
             rf'DELIBERAÇÃO\s+DA\s+MESA|'
             rf'PORTARIA(?:\s+DA\s+DIRETORIA-GERAL\s*{dash}\s*DGE\s*{dash})?(?:\s*DGE)?|'
+            rf'PORTARIA|'
             rf'ORDEM\s+DE\s+SERVIÇO\s+PRES/PSEC'
             rf')\s*N[º°]\s*([\d\.]+)'
             rf'(?:\s*/\s*(\d{{4}}))?'
@@ -572,11 +580,19 @@ class AdministrativeProcessor:
                     trecho = trecho[:fim_idx]
                 _extrair_alteracoes_do_segmento(trecho)
 
-            # (C3) NOVO: "Fica(m)/Torna(m) sem efeito ..." (captura norma referida no mesmo período)
+            # (C3) "Fica(m)/Torna(m) sem efeito ..."
             sem_match = self.sem_efeito_regex.search(text)
             if sem_match and ultima_norma is not None:
-                # Captura do "sem efeito" até o terminador estrutural, se houver
                 trecho = text[sem_match.start():].strip()
+                fim_idx = _achar_fim_lista(trecho)
+                if fim_idx is not None:
+                    trecho = trecho[:fim_idx]
+                _extrair_alteracoes_do_segmento(trecho)
+
+            # (C4) NOVO: "Fica(m) prorrogado(s/a/as/os) ..."
+            pror_match = self.prorrogacao_regex.search(text)
+            if pror_match and ultima_norma is not None:
+                trecho = text[pror_match.start():].strip()
                 fim_idx = _achar_fim_lista(trecho)
                 if fim_idx is not None:
                     trecho = trecho[:fim_idx]
@@ -596,6 +612,7 @@ class AdministrativeProcessor:
         output_csv = io.StringIO()
         df.to_csv(output_csv, index=False, encoding="utf-8-sig")
         return output_csv.getvalue().encode('utf-8-sig')
+
 
 
 
