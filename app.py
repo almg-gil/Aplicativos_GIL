@@ -420,22 +420,22 @@ class AdministrativeProcessor:
             re.IGNORECASE
         )
 
-        # --- (2d) NOVO: gatilho para "prorrogação" (prorroga prazo previsto em norma) ---
-        # Ex.: "Fica prorrogado ... o prazo previsto ... da Portaria nº 46, de ... 2025."
+        # --- (2d) Gatilho para "prorrogação" ---
         self.prorrogacao_regex = re.compile(
             r'\bFic(?:a|am)\s+prorrogad(?:a|o|as|os)\b',
             re.IGNORECASE
         )
 
-        # --- (3) Terminadores estruturais: próximo Art. / Artigo / nova norma publicada ---
+        # --- (3) Terminadores estruturais: CABEÇALHO de Artigo (AJUSTE AQUI) ---
+        # Agora só considera fim quando for "Art. 4º –" / "Art. 4º -" (cabeçalho),
+        # e NÃO quando for "art. 1º da ..." (referência interna).
+        dash = r'[–—-]'
         self.fim_lista_revogacoes_regex = re.compile(
-            r'\bArt\.\s*\d+º?\b|\bArtigo\s+\d+º?\b',
+            rf'\bArt\.\s*\d+º?\s*{dash}\s*|\bArtigo\s+\d+º?\s*{dash}\s*',
             re.IGNORECASE
         )
 
         # --- (4) Norma alvo (revogada/alterada) — tolerante a hífen/travessão ---
-        # AJUSTE AQUI: aceitar também "PORTARIA Nº 46" (sem DGE)
-        dash = r'[–—-]'
         self.norma_alterada_regex = re.compile(
             rf'\b('
             rf'DELIBERAÇÃO\s+DA\s+MESA|'
@@ -462,7 +462,6 @@ class AdministrativeProcessor:
         ultima_norma = None
         seen_alteracoes = set()
 
-        # --- Estado para capturar lista atravessando páginas ---
         capturando_revogacoes = False
         buffer_revogacoes = ""
 
@@ -502,7 +501,6 @@ class AdministrativeProcessor:
 
                 sigla_alt = _normalizar_sigla(tipo_alt_raw)
 
-                # Evita auto-referência (mesma norma publicada)
                 if ultima_norma and sigla_alt == ultima_norma["Sigla"] and num_alt == ultima_norma["Número"]:
                     if (not ano_alt) or (ano_alt == ultima_norma["Ano"]):
                         continue
@@ -529,7 +527,6 @@ class AdministrativeProcessor:
             if not text:
                 continue
 
-            # (A) Se já estava capturando lista longa, concatena e fecha por terminador estrutural
             if capturando_revogacoes:
                 buffer_revogacoes += " " + text
                 fim_idx = _achar_fim_lista(buffer_revogacoes)
@@ -539,7 +536,6 @@ class AdministrativeProcessor:
                     capturando_revogacoes = False
                     buffer_revogacoes = ""
 
-            # (B) Normas publicadas
             for m in self.norma_publicada_regex.finditer(text):
                 tipo_texto = (m.group(1) or "").upper().strip()
                 numero = (m.group(2) or "").replace('.', '')
@@ -557,7 +553,6 @@ class AdministrativeProcessor:
                     ultima_norma = linha
                     seen_alteracoes = set()
 
-            # (C) Lista longa de revogações (caput)
             caput_match = self.revogacoes_caput_regex.search(text)
             if caput_match and ultima_norma is not None:
                 buffer_revogacoes = text[caput_match.end():].strip()
@@ -571,7 +566,6 @@ class AdministrativeProcessor:
                 else:
                     capturando_revogacoes = True
 
-            # (C2) Revogação simples
             sim_match = self.revogacao_simples_regex.search(text)
             if sim_match and ultima_norma is not None:
                 trecho = text[sim_match.start():].strip()
@@ -580,7 +574,6 @@ class AdministrativeProcessor:
                     trecho = trecho[:fim_idx]
                 _extrair_alteracoes_do_segmento(trecho)
 
-            # (C3) "Fica(m)/Torna(m) sem efeito ..."
             sem_match = self.sem_efeito_regex.search(text)
             if sem_match and ultima_norma is not None:
                 trecho = text[sem_match.start():].strip()
@@ -589,7 +582,7 @@ class AdministrativeProcessor:
                     trecho = trecho[:fim_idx]
                 _extrair_alteracoes_do_segmento(trecho)
 
-            # (C4) NOVO: "Fica(m) prorrogado(s/a/as/os) ..."
+            # PRORROGAÇÃO (agora não vai cortar em "art. 1º da ...")
             pror_match = self.prorrogacao_regex.search(text)
             if pror_match and ultima_norma is not None:
                 trecho = text[pror_match.start():].strip()
@@ -598,7 +591,6 @@ class AdministrativeProcessor:
                     trecho = trecho[:fim_idx]
                 _extrair_alteracoes_do_segmento(trecho)
 
-            # (D) DCS
             if self.regex_dcs.search(text):
                 resultados.append({"Sigla": "DCS", "Número": "", "Ano": "", "Alterações": ""})
 
@@ -612,14 +604,7 @@ class AdministrativeProcessor:
         output_csv = io.StringIO()
         df.to_csv(output_csv, index=False, encoding="utf-8-sig")
         return output_csv.getvalue().encode('utf-8-sig')
-
-
-
-
-
-
-
-
+        
 class ExecutiveProcessor:
     def __init__(self, pdf_bytes: bytes):
         # 1. Pré-processamento: Limpa os bytes do PDF antes de armazenar.
