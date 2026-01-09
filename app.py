@@ -395,37 +395,39 @@ class AdministrativeProcessor:
     def __init__(self, pdf_bytes: bytes):
         self.pdf_bytes = pdf_bytes
 
-        # --- (1) Norma publicada (como antes, só deixei IGNORECASE e N[º°]) ---
+        # --- (1) Norma publicada (como antes; IGNORECASE para robustez) ---
         self.norma_publicada_regex = re.compile(
             r'(DELIBERAÇÃO DA MESA|PORTARIA DGE|ORDEM DE SERVIÇO PRES/PSEC)\s+N[º°]\s+([\d\.]+)\/(\d{4})',
             re.IGNORECASE
         )
 
-        # --- (2) Frase gatilho ESPECÍFICA para a lista de revogações (NOVA) ---
-        # Captura o caput inteiro até os dois pontos ":"
+        # --- (2) Caput gatilho da lista de revogações (como combinado) ---
         self.revogacoes_caput_regex = re.compile(
             r'Ficam\s+revogados\s+os\s+seguintes\s+atos\s+normativos,'
             r'\s+sem\s+preju[ií]zo\s+dos\s+efeitos\s+por\s+eles\s+produzidos\s*:',
             re.IGNORECASE
         )
 
-        # --- (3) Norma citada como alvo de revogação/alteração (como antes) ---
-        # Captura:
-        # "Portaria da Diretoria-Geral – DGE – nº 23, de 23 de julho de 2024"
-        # "Portaria DGE nº 24, de 8 de agosto de 2024"
-        # Também aceita "/AAAA" se aparecer.
-        self.norma_alterada_regex = re.compile(
-            r'\b('
-            r'DELIBERAÇÃO\s+DA\s+MESA|'
-            r'PORTARIA(?:\s+DA\s+DIRETORIA-GERAL\s+–\s+DGE\s+–)?\s+DGE|'
-            r'ORDEM\s+DE\s+SERVIÇO\s+PRES/PSEC'
-            r')\s*N[º°]\s*([\d\.]+)'
-            r'(?:\s*/\s*(\d{4}))?'
-            r'(?:\s*,\s*de\s*[^;\.]*?(\d{4}))?',
+        # --- (3) Terminadores estruturais: próximo Art. / Artigo / nova norma publicada ---
+        self.fim_lista_revogacoes_regex = re.compile(
+            r'\bArt\.\s*\d+º?\b|\bArtigo\s+\d+º?\b',
             re.IGNORECASE
         )
 
-        # --- (4) DCS (como antes) ---
+        # --- (4) Norma alvo (revogada/alterada) — tolerante a hífen/travessão ---
+        dash = r'[–—-]'
+        self.norma_alterada_regex = re.compile(
+            rf'\b('
+            rf'DELIBERAÇÃO\s+DA\s+MESA|'
+            rf'PORTARIA(?:\s+DA\s+DIRETORIA-GERAL\s*{dash}\s*DGE\s*{dash})?\s*DGE|'
+            rf'ORDEM\s+DE\s+SERVIÇO\s+PRES/PSEC'
+            rf')\s*N[º°]\s*([\d\.]+)'
+            rf'(?:\s*/\s*(\d{{4}}))?'
+            rf'(?:\s*,\s*de\s*[^;\.]*?(\d{{4}}))?',
+            re.IGNORECASE
+        )
+
+        # --- (5) DCS (como antes) ---
         self.regex_dcs = re.compile(r'DECIS[ÃA]O DA 1ª-SECRETARIA', re.IGNORECASE)
 
     def process_pdf(self):
@@ -439,18 +441,19 @@ class AdministrativeProcessor:
         ultima_norma = None
         seen_alteracoes = set()
 
-        # --- Estado para capturar a lista de revogações até o primeiro "." (NOVO) ---
+        # --- Estado para capturar lista atravessando páginas ---
         capturando_revogacoes = False
         buffer_revogacoes = ""
 
         def _normalizar_sigla(tipo_txt_upper: str) -> str:
-            if "DELIBERAÇÃO DA MESA" in tipo_txt_upper:
+            t = (tipo_txt_upper or "").upper()
+            if "DELIBERAÇÃO DA MESA" in t:
                 return "DLB"
-            if "PORTARIA" in tipo_txt_upper:
+            if "PORTARIA" in t:
                 return "PRT"
-            if "ORDEM DE SERVIÇO" in tipo_txt_upper:
+            if "ORDEM DE SERVIÇO" in t:
                 return "OSV"
-            return tipo_txt_upper
+            return t.strip()
 
         def _adicionar_alteracao(chave_alt: str):
             nonlocal resultados, ultima_norma, seen_alteracoes
@@ -471,7 +474,7 @@ class AdministrativeProcessor:
                 })
 
         def _extrair_alteracoes_do_segmento(segmento: str):
-            # Pega TODAS as normas dentro do segmento (lista separada por ";")
+            # Captura TODAS as normas no segmento (lista por ";")
             for alt in self.norma_alterada_regex.finditer(segmento):
                 tipo_alt_raw = (alt.group(1) or "").upper().strip()
                 num_alt = (alt.group(2) or "").replace(".", "").replace(" ", "")
@@ -479,34 +482,50 @@ class AdministrativeProcessor:
 
                 sigla_alt = _normalizar_sigla(tipo_alt_raw)
 
-                # Evita auto-referência (a própria norma publicada)
+                # Evita auto-referência (mesma norma publicada)
                 if ultima_norma and sigla_alt == ultima_norma["Sigla"] and num_alt == ultima_norma["Número"]:
-                    # se o ano não veio, ainda assim evita auto-referência por segurança
                     if (not ano_alt) or (ano_alt == ultima_norma["Ano"]):
                         continue
 
                 chave = f"{sigla_alt} {num_alt}" + (f" {ano_alt}" if ano_alt else "")
                 _adicionar_alteracao(chave)
 
+        def _achar_fim_lista(buffer: str):
+            """
+            Retorna o índice (start) do primeiro terminador estrutural encontrado:
+            - próximo Art./Artigo
+            - ou início de nova norma publicada
+            """
+            candidatos = []
+
+            m_art = self.fim_lista_revogacoes_regex.search(buffer)
+            if m_art:
+                candidatos.append(m_art.start())
+
+            m_norma = self.norma_publicada_regex.search(buffer)
+            if m_norma:
+                candidatos.append(m_norma.start())
+
+            return min(candidatos) if candidatos else None
+
         for page in doc:
             text = page.get_text("text") or ""
-            # normaliza whitespace mas preserva ";" ":" "."
+            # Normaliza espaços preservando pontuação
             text = re.sub(r'\s+', ' ', text).strip()
             if not text:
                 continue
 
-            # --- (A) Se já estamos capturando revogações, anexamos a página e tentamos fechar no primeiro "." ---
+            # (A) Se já estava capturando, concatena e tenta fechar por terminador estrutural
             if capturando_revogacoes:
                 buffer_revogacoes += " " + text
-                ponto_idx = buffer_revogacoes.find(".")
-                if ponto_idx != -1:
-                    segmento = buffer_revogacoes[:ponto_idx + 1]
+                fim_idx = _achar_fim_lista(buffer_revogacoes)
+                if fim_idx is not None:
+                    segmento = buffer_revogacoes[:fim_idx]
                     _extrair_alteracoes_do_segmento(segmento)
-                    # encerra captura
                     capturando_revogacoes = False
                     buffer_revogacoes = ""
 
-            # --- (B) Detecta normas publicadas (mantém regra anterior) ---
+            # (B) Normas publicadas (mantém regra; agora com coluna Alterações)
             for m in self.norma_publicada_regex.finditer(text):
                 tipo_texto = (m.group(1) or "").upper().strip()
                 numero = (m.group(2) or "").replace('.', '')
@@ -524,24 +543,21 @@ class AdministrativeProcessor:
                     ultima_norma = linha
                     seen_alteracoes = set()
 
-            # --- (C) Detecta o caput de revogação e inicia captura até o primeiro "." (NOVO) ---
+            # (C) Detecta o caput de revogação e inicia (ou finaliza) a captura
             caput_match = self.revogacoes_caput_regex.search(text)
             if caput_match and ultima_norma is not None:
-                # começa a capturar logo após o ":"
                 buffer_revogacoes = text[caput_match.end():].strip()
 
-                ponto_idx = buffer_revogacoes.find(".")
-                if ponto_idx != -1:
-                    # tudo está na mesma página: processa e encerra
-                    segmento = buffer_revogacoes[:ponto_idx + 1]
+                fim_idx = _achar_fim_lista(buffer_revogacoes)
+                if fim_idx is not None:
+                    segmento = buffer_revogacoes[:fim_idx]
                     _extrair_alteracoes_do_segmento(segmento)
                     capturando_revogacoes = False
                     buffer_revogacoes = ""
                 else:
-                    # não apareceu "." ainda: continua nas próximas páginas
                     capturando_revogacoes = True
 
-            # --- (D) DCS (mantém regra original) ---
+            # (D) DCS (mantém regra original)
             if self.regex_dcs.search(text):
                 resultados.append({"Sigla": "DCS", "Número": "", "Ano": "", "Alterações": ""})
 
@@ -556,6 +572,7 @@ class AdministrativeProcessor:
         output_csv = io.StringIO()
         df.to_csv(output_csv, index=False, encoding="utf-8-sig")
         return output_csv.getvalue().encode('utf-8')
+
 
 
 
