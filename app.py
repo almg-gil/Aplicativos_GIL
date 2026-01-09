@@ -76,17 +76,19 @@ class LegislativeProcessor:
 
         reader = pypdf.PdfReader(io.BytesIO(self.pdf_bytes))
 
-        # Extrai por página sem colapsar quebras de linha (para não quebrar MULTILINE/^)
+        # Extrai por página e preserva quebras de linha (IMPORTANTE p/ regex com MULTILINE e ^)
         page_texts = []
         for page in reader.pages:
             pt = page.extract_text() or ""
+            # Normaliza apenas espaços/tabs, sem mexer em \n
             pt = re.sub(r"[ \t]+", " ", pt)
             page_texts.append(pt)
 
-        # offsets (start, end, page_number) em self.text concatenado
-        self._offsets = []
+        # Monta texto global com offsets por página
+        self._offsets = []  # (start, end, page_number)
         parts = []
         cursor = 0
+
         for idx, pt in enumerate(page_texts, start=1):
             chunk = pt + "\n"  # separador estável entre páginas
             start = cursor
@@ -104,7 +106,6 @@ class LegislativeProcessor:
         return ""
 
     def process_normas(self) -> pd.DataFrame:
-        # ====== (1) Norma publicada (igual) ======
         pattern = re.compile(
             r"^(LEI COMPLEMENTAR|LEI|RESOLUÇÃO|EMENDA À CONSTITUIÇÃO|DELIBERAÇÃO DA MESA) Nº (\d{1,5}(?:\.\d{0,3})?)(?:/(\d{4}))?(?:, DE .+ DE (\d{4}))?$",
             re.MULTILINE
@@ -121,41 +122,6 @@ class LegislativeProcessor:
             "AGOSTO": "08", "SETEMBRO": "09", "OUTUBRO": "10", "NOVEMBRO": "11", "DEZEMBRO": "12"
         }
 
-        # ====== (2) Regras de Alterações = MESMAS do AdministrativeProcessor ======
-        revogacoes_caput_regex = re.compile(
-            r'Ficam\s+revogados\s+os\s+seguintes\s+atos\s+normativos,'
-            r'\s+sem\s+preju[ií]zo\s+dos\s+efeitos\s+por\s+eles\s+produzidos\s*:',
-            re.IGNORECASE
-        )
-        revogacao_simples_regex = re.compile(r'\bFic(?:a|am)\s+revogad(?:a|o|as|os)\b', re.IGNORECASE)
-        sem_efeito_regex = re.compile(r'\bFic(?:a|am)\s+sem\s+efeito\b|\bTorn(?:a|am)\s+sem\s+efeito\b', re.IGNORECASE)
-        prorrogacao_regex = re.compile(r'\bFic(?:a|am)\s+prorrogad(?:a|o|as|os)\b', re.IGNORECASE)
-        redacao_regex = re.compile(
-            r'\bpassa\s+a\s+vigorar\b|\bpassam\s+a\s+vigorar\b|\bpassa\s+a\s+vigorar\s+com\s+a\s+seguinte\s+reda[cç][aã]o\b',
-            re.IGNORECASE
-        )
-
-        dash = r'[–—-]'
-        fim_lista_revogacoes_regex = re.compile(
-            rf'\bArt\.\s*\d+º?\s*{dash}\s*|\bArtigo\s+\d+º?\s*{dash}\s*',
-            re.IGNORECASE
-        )
-
-        # Norma alvo (revogada/alterada) para o Legislativo (Lei/LC/Resolução/EMC/DLB)
-        norma_alterada_regex = re.compile(
-            rf'\b('
-            rf'LEI\s+COMPLEMENTAR|LEI|RESOLUÇÃO|EMENDA\s+À\s+CONSTITUIÇÃO|DELIBERAÇÃO\s+DA\s+MESA'
-            rf')\s*N[º°]\s*([\d\.]+)'
-            rf'(?:\s*/\s*(\d{{4}}))?'
-            rf'(?:\s*,\s*de\s*[^;\.]*?(\d{{4}}))?',
-            re.IGNORECASE
-        )
-
-        def _normalizar_sigla(tipo_txt_upper: str) -> str:
-            t = (tipo_txt_upper or "").upper().strip()
-            return TIPO_MAP_NORMA.get(t, t)
-
-        # ====== (3) Lista normas com posição para montar blocos ======
         normas = []
         for match in pattern.finditer(self.text):
             tipo_extenso = match.group(1)
@@ -179,102 +145,9 @@ class LegislativeProcessor:
                     sancao = f"{dia}/{mes}/{ano_data}"
 
             sigla = TIPO_MAP_NORMA[tipo_extenso]
+            normas.append([pagina, coluna, sancao, sigla, numero_raw, ano])
 
-            normas.append({
-                "pos": match.start(),
-                "end": match.end(),
-                "pagina": pagina,
-                "coluna": coluna,
-                "sancao": sancao,
-                "sigla": sigla,
-                "numero": numero_raw,
-                "ano": ano,
-            })
-
-        if not normas:
-            return pd.DataFrame(columns=['Página', 'Coluna', 'Sanção', 'Sigla', 'Número', 'Ano', 'Alterações'])
-
-        # ====== (4) Monta resultados com Alterações (igual ao Administrativo) ======
-        resultados = []
-
-        for i, n in enumerate(normas):
-            start = n["end"]
-            end = normas[i + 1]["pos"] if i + 1 < len(normas) else len(self.text)
-            bloco = self.text[start:end]
-
-            linha = {
-                "Página": n["pagina"],
-                "Coluna": n["coluna"],
-                "Sanção": n["sancao"],
-                "Sigla": n["sigla"],
-                "Número": n["numero"],
-                "Ano": n["ano"],
-                "Alterações": ""
-            }
-            resultados.append(linha)
-
-            seen_alteracoes = set()
-
-            def _add_alt(chave: str):
-                if not chave:
-                    return
-                if chave in seen_alteracoes:
-                    return
-                seen_alteracoes.add(chave)
-
-                if linha["Alterações"] == "":
-                    linha["Alterações"] = chave
-                else:
-                    resultados.append({
-                        "Página": "",
-                        "Coluna": "",
-                        "Sanção": "",
-                        "Sigla": "",
-                        "Número": "",
-                        "Ano": "",
-                        "Alterações": chave
-                    })
-
-            def _extrair_alteracoes(seg: str):
-                for alt in norma_alterada_regex.finditer(seg or ""):
-                    tipo_alt_raw = (alt.group(1) or "").upper().strip()
-                    num_alt = (alt.group(2) or "").replace(".", "").replace(" ", "")
-                    ano_alt = alt.group(3) or alt.group(4) or ""
-
-                    sigla_alt = _normalizar_sigla(tipo_alt_raw)
-
-                    # evita auto-referência (mesma norma publicada)
-                    if sigla_alt == linha["Sigla"] and num_alt == linha["Número"]:
-                        if (not ano_alt) or (ano_alt == linha["Ano"]):
-                            continue
-
-                    chave = f"{sigla_alt} {num_alt}" + (f" {ano_alt}" if ano_alt else "")
-                    _add_alt(chave)
-
-            # 4a) Lista longa por caput
-            cap = revogacoes_caput_regex.search(bloco)
-            if cap:
-                after = bloco[cap.end():]
-                fim = None
-                m_art = fim_lista_revogacoes_regex.search(after)
-                if m_art:
-                    fim = m_art.start()
-                segmento = after[:fim] if fim is not None else after
-                _extrair_alteracoes(segmento)
-
-            # 4b) Outros gatilhos em janelas
-            for gat in (revogacao_simples_regex, sem_efeito_regex, prorrogacao_regex):
-                for gm in gat.finditer(bloco):
-                    janela = bloco[gm.start(): gm.start() + 1200]
-                    _extrair_alteracoes(janela)
-
-            for gm in redacao_regex.finditer(bloco):
-                start_j = max(0, gm.start() - 600)
-                end_j = min(len(bloco), gm.end() + 1200)
-                janela = bloco[start_j:end_j]
-                _extrair_alteracoes(janela)
-
-        return pd.DataFrame(resultados, columns=['Página', 'Coluna', 'Sanção', 'Sigla', 'Número', 'Ano', 'Alterações'])
+        return pd.DataFrame(normas, columns=['Página', 'Coluna', 'Sanção', 'Sigla', 'Número', 'Ano'])
 
     def process_proposicoes(self) -> pd.DataFrame:
         pattern_prop = re.compile(
@@ -317,19 +190,16 @@ class LegislativeProcessor:
         # === SEU CÓDIGO ORIGINAL, SEM MUDAR REGRAS ===
         requerimentos = []
 
-        # IGNORAR REQUERIMENTOS EM OFÍCIOS
         ignore_officio_pattern = re.compile(
             r"Ofício[\s\S]{0,200}?Requerimento\s*n[ºo]?\s*(\d{1,5}(?:\.\d{0,3})?)/(\d{4})",
             re.IGNORECASE
         )
 
-        # IGNORAR "ANEXE-SE AO REQUERIMENTO ..."
         ignore_anexese_pattern = re.compile(
             r"Anexe-se\s+ao\s+Requerimento\s*n[ºo]?\s*(\d{1,5}(?:\.\d{0,3})?)/(\d{4})",
             re.IGNORECASE
         )
 
-        # IGNORAR CASOS "informações RELATIVAS AO Requerimento nº ..."
         ignore_relativas_pattern = re.compile(
             r"(?:relativa[s]?|referente[s]?|informações\s+relativas\s+ao)"
             r"[\s\S]{0,80}?Requerimento\s*n[ºo]?\s*(\d{1,5}(?:\.\d{0,3})?)/(\d{4})",
@@ -338,27 +208,20 @@ class LegislativeProcessor:
 
         reqs_to_ignore = set()
 
-        # Coleta de ignore: Ofício
         for match in ignore_officio_pattern.finditer(self.text):
             num_part = match.group(1).replace('.', '')
             ano = match.group(2)
             reqs_to_ignore.add(f"{num_part}/{ano}")
 
-        # Coleta de ignore: Anexe-se
         for match in ignore_anexese_pattern.finditer(self.text):
             num_part = match.group(1).replace('.', '')
             ano = match.group(2)
             reqs_to_ignore.add(f"{num_part}/{ano}")
 
-        # Coleta de ignore: relativas / referentes / informações relativas
         for match in ignore_relativas_pattern.finditer(self.text):
             num_part = match.group(1).replace('.', '')
             ano = match.group(2)
             reqs_to_ignore.add(f"{num_part}/{ano}")
-
-        # -----------------------------------------
-        # PADRÕES DE RECOLHIMENTO NORMAL
-        # -----------------------------------------
 
         ignore_pattern = re.compile(
             r"Ofício nº .*?,.*?relativas ao Requerimento\s*nº (\d{1,4}\.?\d{0,3}/\d{4})",
@@ -436,8 +299,8 @@ class LegislativeProcessor:
 
         rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
         rqc_old_pattern = re.compile(r"^(?:\s*)(nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
-        for pattern2, sigla_prefix in [(rqn_pattern, "RQN"), (rqc_old_pattern, "RQC")]:
-            for match in pattern2.finditer(self.text):
+        for pattern, sigla_prefix in [(rqn_pattern, "RQN"), (rqc_old_pattern, "RQC")]:
+            for match in pattern.finditer(self.text):
                 start_idx = match.start()
                 next_match = re.search(
                     r"^(?:\s*)(Nº|nº)\s+(\d{2}\.?\d{3}/\d{4})",
@@ -480,6 +343,7 @@ class LegislativeProcessor:
         return pd.DataFrame(unique_reqs, columns=['Sigla', 'Número', 'Ano', 'Coluna4', 'Coluna5', 'Classificação'])
 
     def process_pareceres(self) -> pd.DataFrame:
+        # === SEU CÓDIGO ORIGINAL (igual ao que você enviou), sem mudar regras ===
         found_projects = {}
         pareceres_start_pattern = re.compile(r"TRAMITAÇÃO DE PROPOSIÇÕES")
         votacao_pattern = re.compile(
@@ -549,8 +413,8 @@ class LegislativeProcessor:
                     found_projects[project_key] = set()
                 found_projects[project_key].add(item_type)
 
-        emenda_projeto_lei_pattern2 = re.compile(r"EMENDAS AO PROJETO DE LEI Nº (\d{1,4}\.?\d{0,3})/(\d{4})", re.IGNORECASE)
-        for match in emenda_projeto_lei_pattern2.finditer(clean_text):
+        emenda_projeto_lei_pattern = re.compile(r"EMENDAS AO PROJETO DE LEI Nº (\d{1,4}\.?\d{0,3})/(\d{4})", re.IGNORECASE)
+        for match in emenda_projeto_lei_pattern.finditer(clean_text):
             numero_raw = match.group(1).replace('.', '')
             ano = match.group(2)
             project_key = ("PL", numero_raw, ano)
@@ -576,7 +440,6 @@ class LegislativeProcessor:
             "Requerimentos": df_requerimentos,
             "Pareceres": df_pareceres
         }
-
 
 class AdministrativeProcessor:
     def __init__(self, pdf_bytes: bytes):
@@ -858,7 +721,6 @@ class AdministrativeProcessor:
         df.to_csv(output_csv, index=False, encoding="utf-8-sig")
         return output_csv.getvalue().encode('utf-8-sig')
 
-
 class ExecutiveProcessor:
     def __init__(self, pdf_bytes: bytes):
         self.pdf_bytes = self._clean_pdf_bytes(pdf_bytes)
@@ -1032,7 +894,6 @@ class ExecutiveProcessor:
         output_csv = io.StringIO()
         df.to_csv(output_csv, index=False, encoding="utf-8-sig")
         return output_csv.getvalue().encode('utf-8')
-
 
 # --- Funções para Gerador de Links ---
 def dia_anterior():
@@ -1261,6 +1122,10 @@ def carregar_dicionario_termos(nome_arquivo):
     return termos, mapa_hierarquia
 
 def carregar_exemplos_resumos(nome_arquivo):
+    """
+    Carrega exemplos de resumos de um arquivo CSV.
+    Retorna uma lista de strings formatadas para o prompt.
+    """
     if not os.path.exists(nome_arquivo):
         print(f"Aviso: Arquivo de exemplos '{nome_arquivo}' não encontrado. Usando apenas o prompt base.")
         return []
@@ -1302,6 +1167,10 @@ def aplicar_logica_hierarquia(termos_sugeridos, mapa_hierarquia):
     return list(termos_finais)
 
 def gerar_resumo(texto_original, exemplos_resumos):
+    """
+    Gera um resumo da proposição legislativa usando a API Gemini,
+    seguindo regras rigorosas e exemplos de Few-Shot.
+    """
     api_key = get_api_key()
 
     if not api_key:
@@ -1428,6 +1297,10 @@ def gerar_termos_llm(texto_original, termos_dicionario, num_termos):
 
 # --- Funções para Conversor de PDF em Texto (OCR) ---
 def correct_ocr_text(raw_text):
+    """
+    Chama a API da Gemini para corrigir erros de OCR, normalizar a ortografia arcaica,
+    remover cabeçalho e formatar dados estruturados como tabela em Markdown — SEM negrito.
+    """
     api_key = get_api_key()
     if not api_key:
         st.error("Chave de API do Gemini não encontrada. Verifique as variáveis de ambiente ou secrets.")
@@ -1456,11 +1329,9 @@ Regras estritas:
         "system_instruction": {"parts": [{"text": system_prompt}]},
     }
     try:
-        response = requests.post(
-            apiUrl,
-            headers={'Content-Type': 'application/json'},
-            data=json.dumps(payload)
-        )
+        response = requests.post(apiUrl,
+                                headers={'Content-Type': 'application/json'},
+                                data=json.dumps(payload))
         if response.status_code == 400:
             st.error(f"Erro detalhado da API (400): {response.text}. Verifique o tamanho do PDF.")
             return raw_text
@@ -1571,6 +1442,15 @@ def run_app():
         if pdf_bytes:
             try:
                 if diario_escolhido == 'Legislativo':
+                    reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
+                    text = ""
+                    for page in reader.pages:
+                        page_text = page.extract_text()
+                        if page_text:
+                            text += page_text + "\n"
+                    text = re.sub(r"[ \t]+", " ", text)
+                    text = re.sub(r"\n+", "\n", text)
+
                     with st.spinner('Extraindo dados do Diário do Legislativo...'):
                         processor = LegislativeProcessor(pdf_bytes)
                         extracted_data = processor.process_all()
@@ -1644,7 +1524,7 @@ def run_app():
         )
         st.session_state.data = data_selecionada
 
-        col1, col2, col3 = st.columns([1, 1, 1])
+        col1, col2, col3 = st.columns([1,1,1])
 
         with col1:
             if st.session_state.data > min_data:
