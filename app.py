@@ -395,7 +395,7 @@ class AdministrativeProcessor:
     def __init__(self, pdf_bytes: bytes):
         self.pdf_bytes = pdf_bytes
 
-        # Meses para converter "4 de dezembro de 2025" -> 04/12/2025
+        # Meses para converter "15 de dezembro de 2025" -> 15/12/2025
         self.meses = {
             "janeiro": "01", "fevereiro": "02", "março": "03", "marco": "03",
             "abril": "04", "maio": "05", "junho": "06", "julho": "07",
@@ -467,9 +467,16 @@ class AdministrativeProcessor:
             re.IGNORECASE
         )
 
-        # --- (5) Fecho (sanção) ---
-        self.fecho_data_regex = re.compile(
+        # --- (5) Fechos (sanção): 2 padrões ---
+        #  (a) Palácio da Inconfidência, 4 de dezembro de 2025.
+        self.fecho_palacio_regex = re.compile(
             r'Pal[aá]cio\s+da\s+Inconfid[eê]ncia\s*,\s*'
+            r'(\d{1,2})\s+de\s+([A-Za-zçÇãÃáÁéÉíÍóÓôÔúÚ]+)\s+de\s+(\d{4})',
+            re.IGNORECASE
+        )
+        #  (b) Sala de Reuniões da Mesa da Assembleia Legislativa, 15 de dezembro de 2025.
+        self.fecho_sala_mesa_regex = re.compile(
+            r'Sala\s+de\s+Reuni[õo]es\s+da\s+Mesa\s+da\s+Assembleia\s+Legislativa\s*,\s*'
             r'(\d{1,2})\s+de\s+([A-Za-zçÇãÃáÁéÉíÍóÓôÔúÚ]+)\s+de\s+(\d{4})',
             re.IGNORECASE
         )
@@ -478,9 +485,14 @@ class AdministrativeProcessor:
         self.regex_dcs = re.compile(r'DECIS[ÃA]O DA 1ª-SECRETARIA', re.IGNORECASE)
 
     def _formatar_data_fecho(self, bloco: str) -> str:
-        m = self.fecho_data_regex.search(bloco or "")
+        bloco = bloco or ""
+
+        m = self.fecho_palacio_regex.search(bloco)
+        if not m:
+            m = self.fecho_sala_mesa_regex.search(bloco)
         if not m:
             return ""
+
         dia = m.group(1).zfill(2)
         mes_nome = (m.group(2) or "").strip().lower()
         ano = (m.group(3) or "").strip()
@@ -513,7 +525,7 @@ class AdministrativeProcessor:
         }.get(t, "")
 
     def process_pdf(self):
-        # ---- 1) Extrai texto por página (como no Legislativo: texto corrido) ----
+        # ---- 1) Extrai texto por página (texto corrido, como no Legislativo) ----
         try:
             reader = pypdf.PdfReader(io.BytesIO(self.pdf_bytes))
         except Exception as e:
@@ -525,23 +537,20 @@ class AdministrativeProcessor:
             page_texts.append(p.extract_text() or "")
 
         # texto global + mapeamento de offsets -> página
-        # (para descobrir a página do match)
         offsets = []
         full_text_parts = []
         cursor = 0
         for idx, pt in enumerate(page_texts, start=1):
-            normalized = pt
-            full_text_parts.append(normalized + "\n")
-            cursor_end = cursor + len(normalized) + 1
+            full_text_parts.append(pt + "\n")
+            cursor_end = cursor + len(pt) + 1
             offsets.append((cursor, cursor_end, idx))
             cursor = cursor_end
 
         full_text = "".join(full_text_parts)
-        # normaliza espaços, preserva \n (para MULTILINE)
         full_text = re.sub(r"[ \t]+", " ", full_text)
         full_text = re.sub(r"\n+", "\n", full_text)
 
-        def _pagina_from_pos(pos: int) -> int:
+        def _pagina_from_pos(pos: int):
             for start, end, pnum in offsets:
                 if start <= pos < end:
                     return pnum
@@ -552,16 +561,18 @@ class AdministrativeProcessor:
         for m in self.norma_publicada_regex.finditer(full_text):
             pos = m.start()
             pagina = _pagina_from_pos(pos)
+
             tipo_raw = m.group(1)
             numero = (m.group(2) or "").replace(".", "").replace(" ", "")
             ano = (m.group(3) or "").strip()
+
             sigla = self._sigla_norma_publicada(tipo_raw)
             if sigla:
                 normas.append({
                     "pos": pos,
                     "end": m.end(),
                     "pagina": pagina,
-                    "coluna": "",   # mesmo padrão do Legislativo (texto corrido)
+                    "coluna": 1,   # <-- SEMPRE 1, como solicitado
                     "sigla": sigla,
                     "numero": numero,
                     "ano": ano
@@ -586,7 +597,6 @@ class AdministrativeProcessor:
             }
             resultados.append(linha)
 
-            # dedup por norma (igual sua lógica)
             seen_alteracoes = set()
 
             def _add_alt(chave: str):
@@ -623,7 +633,7 @@ class AdministrativeProcessor:
                     chave = f"{sigla_alt} {num_alt}" + (f" {ano_alt}" if ano_alt else "")
                     _add_alt(chave)
 
-            # ---- 3a) Lista longa por caput: do caput até Art. seguinte ou até próxima norma ----
+            # 3a) Lista longa por caput
             cap = self.revogacoes_caput_regex.search(bloco)
             if cap:
                 after = bloco[cap.end():]
@@ -634,10 +644,10 @@ class AdministrativeProcessor:
                 segmento = after[:fim] if fim is not None else after
                 _extrair_alteracoes(segmento)
 
-            # ---- 3b) Outros gatilhos (em janelas) ----
+            # 3b) Outros gatilhos em janelas
             for gat in (self.revogacao_simples_regex, self.sem_efeito_regex, self.prorrogacao_regex):
                 for gm in gat.finditer(bloco):
-                    janela = bloco[gm.start(): gm.start() + 1200]  # janela grande
+                    janela = bloco[gm.start(): gm.start() + 1200]
                     _extrair_alteracoes(janela)
 
             for gm in self.redacao_regex.finditer(bloco):
@@ -646,12 +656,11 @@ class AdministrativeProcessor:
                 janela = bloco[start_j:end_j]
                 _extrair_alteracoes(janela)
 
-        # ---- 4) DCS (se quiser manter: varre texto todo e cria linhas) ----
-        # (mantive simples: se existir, adiciona uma linha)
+        # ---- 4) DCS ----
         if self.regex_dcs.search(full_text):
             resultados.append({
                 "Página": "",
-                "Coluna": "",
+                "Coluna": 1,
                 "Sanção": "",
                 "Sigla": "DCS",
                 "Número": "",
@@ -659,7 +668,10 @@ class AdministrativeProcessor:
                 "Alterações": ""
             })
 
-        return pd.DataFrame(resultados, columns=['Página', 'Coluna', 'Sanção', 'Sigla', 'Número', 'Ano', 'Alterações'])
+        return pd.DataFrame(
+            resultados,
+            columns=['Página', 'Coluna', 'Sanção', 'Sigla', 'Número', 'Ano', 'Alterações']
+        )
 
     def to_csv(self):
         df = self.process_pdf()
