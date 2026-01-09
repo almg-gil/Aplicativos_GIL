@@ -395,49 +395,32 @@ class AdministrativeProcessor:
     def __init__(self, pdf_bytes: bytes):
         self.pdf_bytes = pdf_bytes
 
-        # ---------------------------
-        # Meses (para data do fecho)
-        # ---------------------------
+        # Meses para converter "4 de dezembro de 2025" -> 04/12/2025
         self.meses = {
             "janeiro": "01", "fevereiro": "02", "março": "03", "marco": "03",
             "abril": "04", "maio": "05", "junho": "06", "julho": "07",
-            "agosto": "08", "setembro": "09", "outubro": "10", "novembro": "11", "dezembro": "12",
+            "agosto": "08", "setembro": "09", "outubro": "10", "novembro": "11", "dezembro": "12"
         }
 
-        # --- (1) Norma publicada (AJUSTADO: inclui PORTARIA DGE/PSEC/DGE/PRES/DGE/PRES/PSEC) ---
+        # --- (1) Norma publicada (inclui DGE, PSEC/DGE, PRES/DGE, PRES/PSEC) ---
         self.norma_publicada_regex = re.compile(
-            r'(DELIBERAÇÃO DA MESA|'
+            r'^(DELIBERAÇÃO DA MESA|'
             r'PORTARIA\s+(?:DGE|PSEC\s*/\s*DGE|PRES\s*/\s*DGE|PRES\s*/\s*PSEC)|'
-            r'ORDEM DE SERVIÇO PRES/PSEC)\s+N[º°]\s+([\d\.]+)\s*/\s*(\d{4})',
-            re.IGNORECASE
+            r'ORDEM DE SERVIÇO PRES/PSEC)\s+N[º°]\s+([\d\.]+)\s*/\s*(\d{4})\s*$',
+            re.IGNORECASE | re.MULTILINE
         )
 
-        # --- (2) Caput gatilho da lista de revogações ---
+        # --- (2) Caput gatilho (lista longa) ---
         self.revogacoes_caput_regex = re.compile(
             r'Ficam\s+revogados\s+os\s+seguintes\s+atos\s+normativos,'
             r'\s+sem\s+preju[ií]zo\s+dos\s+efeitos\s+por\s+eles\s+produzidos\s*:',
             re.IGNORECASE
         )
 
-        # --- (2b) Revogação simples ---
-        self.revogacao_simples_regex = re.compile(
-            r'\bFic(?:a|am)\s+revogad(?:a|o|as|os)\b',
-            re.IGNORECASE
-        )
-
-        # --- (2c) "Sem efeito" ---
-        self.sem_efeito_regex = re.compile(
-            r'\bFic(?:a|am)\s+sem\s+efeito\b|\bTorn(?:a|am)\s+sem\s+efeito\b',
-            re.IGNORECASE
-        )
-
-        # --- (2d) "Prorrogação" ---
-        self.prorrogacao_regex = re.compile(
-            r'\bFic(?:a|am)\s+prorrogad(?:a|o|as|os)\b',
-            re.IGNORECASE
-        )
-
-        # --- (2e) "Passa a vigorar" ---
+        # --- outros gatilhos ---
+        self.revogacao_simples_regex = re.compile(r'\bFic(?:a|am)\s+revogad(?:a|o|as|os)\b', re.IGNORECASE)
+        self.sem_efeito_regex = re.compile(r'\bFic(?:a|am)\s+sem\s+efeito\b|\bTorn(?:a|am)\s+sem\s+efeito\b', re.IGNORECASE)
+        self.prorrogacao_regex = re.compile(r'\bFic(?:a|am)\s+prorrogad(?:a|o|as|os)\b', re.IGNORECASE)
         self.redacao_regex = re.compile(
             r'\bpassa\s+a\s+vigorar\b|\bpassam\s+a\s+vigorar\b|\bpassa\s+a\s+vigorar\s+com\s+a\s+seguinte\s+reda[cç][aã]o\b',
             re.IGNORECASE
@@ -445,13 +428,13 @@ class AdministrativeProcessor:
 
         dash = r'[–—-]'
 
-        # --- (3) Terminadores estruturais: cabeçalho de artigo ---
+        # --- (3) Terminadores estruturais (para lista) ---
         self.fim_lista_revogacoes_regex = re.compile(
             rf'\bArt\.\s*\d+º?\s*{dash}\s*|\bArtigo\s+\d+º?\s*{dash}\s*',
             re.IGNORECASE
         )
 
-        # --- (4) Norma alvo (revogada/alterada) — já com suas variações anteriores ---
+        # --- (4) Norma alvo alterada (inclui as variações que vocês já validaram) ---
         self.norma_alterada_regex = re.compile(
             rf'\b('
             rf'DELIBERAÇÃO\s+DA\s+MESA|'
@@ -484,259 +467,199 @@ class AdministrativeProcessor:
             re.IGNORECASE
         )
 
-        # --- (5) DCS ---
-        self.regex_dcs = re.compile(r'DECIS[ÃA]O DA 1ª-SECRETARIA', re.IGNORECASE)
-
-        # --- (6) Fecho (data “Palácio da Inconfidência, 4 de dezembro de 2025.”) ---
+        # --- (5) Fecho (sanção) ---
         self.fecho_data_regex = re.compile(
             r'Pal[aá]cio\s+da\s+Inconfid[eê]ncia\s*,\s*'
             r'(\d{1,2})\s+de\s+([A-Za-zçÇãÃáÁéÉíÍóÓôÔúÚ]+)\s+de\s+(\d{4})',
             re.IGNORECASE
         )
 
+        # --- (6) DCS ---
+        self.regex_dcs = re.compile(r'DECIS[ÃA]O DA 1ª-SECRETARIA', re.IGNORECASE)
+
+    def _formatar_data_fecho(self, bloco: str) -> str:
+        m = self.fecho_data_regex.search(bloco or "")
+        if not m:
+            return ""
+        dia = m.group(1).zfill(2)
+        mes_nome = (m.group(2) or "").strip().lower()
+        ano = (m.group(3) or "").strip()
+        mes = self.meses.get(mes_nome, "")
+        if not mes:
+            return ""
+        return f"{dia}/{mes}/{ano}"
+
+    def _normalizar_sigla(self, tipo_txt_upper: str) -> str:
+        t = (tipo_txt_upper or "").upper()
+        if "DELIBERAÇÃO DA MESA" in t:
+            return "DLB"
+        if "PORTARIA" in t:
+            return "PRT"
+        if "ORDEM DE SERVI" in t:
+            return "OSV"
+        return t.strip()
+
+    def _sigla_norma_publicada(self, tipo_raw: str) -> str:
+        t = (tipo_raw or "").upper().strip()
+        t = re.sub(r'\s+', ' ', t)
+        t = re.sub(r'\s*/\s*', '/', t)
+        return {
+            "DELIBERAÇÃO DA MESA": "DLB",
+            "PORTARIA DGE": "PRT",
+            "PORTARIA PSEC/DGE": "PRT",
+            "PORTARIA PRES/DGE": "PRT",
+            "PORTARIA PRES/PSEC": "PRT",
+            "ORDEM DE SERVIÇO PRES/PSEC": "OSV",
+        }.get(t, "")
+
     def process_pdf(self):
+        # ---- 1) Extrai texto por página (como no Legislativo: texto corrido) ----
         try:
-            doc = fitz.open(stream=self.pdf_bytes, filetype="pdf")
+            reader = pypdf.PdfReader(io.BytesIO(self.pdf_bytes))
         except Exception as e:
             st.error(f"Erro ao abrir o arquivo PDF: {e}")
             return None
 
-        # ------------------------------------
-        # 1) Extrai trechos por Página/Coluna
-        # ------------------------------------
-        trechos = []
-        for i, page in enumerate(doc):
-            width, height = page.rect.width, page.rect.height
-            # duas colunas (esquerda, direita)
-            for col_num, (x0, x1) in enumerate([(0, width / 2), (width / 2, width)], start=1):
-                clip = fitz.Rect(x0, 0, x1, height)
-                txt = page.get_text("text", clip=clip) or ""
-                txt = re.sub(r'\s+', ' ', txt).strip()
-                if txt:
-                    trechos.append({"pagina": i + 1, "coluna": col_num, "texto": txt})
+        page_texts = []
+        for p in reader.pages:
+            page_texts.append(p.extract_text() or "")
 
-        resultados = []
-        ultima_norma = None
-        seen_alteracoes = set()
+        # texto global + mapeamento de offsets -> página
+        # (para descobrir a página do match)
+        offsets = []
+        full_text_parts = []
+        cursor = 0
+        for idx, pt in enumerate(page_texts, start=1):
+            normalized = pt
+            full_text_parts.append(normalized + "\n")
+            cursor_end = cursor + len(normalized) + 1
+            offsets.append((cursor, cursor_end, idx))
+            cursor = cursor_end
 
-        # buffer para detectar data do fecho (sanção) dentro da norma corrente
-        buffer_norma_atual = ""
+        full_text = "".join(full_text_parts)
+        # normaliza espaços, preserva \n (para MULTILINE)
+        full_text = re.sub(r"[ \t]+", " ", full_text)
+        full_text = re.sub(r"\n+", "\n", full_text)
 
-        # estado para capturar lista de revogações atravessando trechos/páginas
-        capturando_revogacoes = False
-        buffer_revogacoes = ""
+        def _pagina_from_pos(pos: int) -> int:
+            for start, end, pnum in offsets:
+                if start <= pos < end:
+                    return pnum
+            return ""
 
-        def _normalizar_sigla(tipo_txt_upper: str) -> str:
-            t = (tipo_txt_upper or "").upper()
-            if "DELIBERAÇÃO DA MESA" in t:
-                return "DLB"
-            if "PORTARIA" in t:
-                return "PRT"
-            if "ORDEM DE SERVI" in t:
-                return "OSV"
-            return t.strip()
-
-        def _normalizar_tipo_publicado(tipo_raw: str) -> str:
-            t = (tipo_raw or "").upper().strip()
-            t = re.sub(r'\s+', ' ', t)
-            t = re.sub(r'\s*/\s*', '/', t)
-            return t
-
-        def _extrair_data_fecho(texto: str) -> str:
-            m = self.fecho_data_regex.search(texto or "")
-            if not m:
-                return ""
-            dia = m.group(1).zfill(2)
-            mes_nome = (m.group(2) or "").strip().lower()
+        # ---- 2) Acha todas as normas publicadas com posição (para formar blocos) ----
+        normas = []
+        for m in self.norma_publicada_regex.finditer(full_text):
+            pos = m.start()
+            pagina = _pagina_from_pos(pos)
+            tipo_raw = m.group(1)
+            numero = (m.group(2) or "").replace(".", "").replace(" ", "")
             ano = (m.group(3) or "").strip()
-            mes = self.meses.get(mes_nome, "")
-            if not mes:
-                return ""
-            return f"{dia}/{mes}/{ano}"
-
-        def _finalizar_norma_corrente():
-            nonlocal ultima_norma, buffer_norma_atual
-            if ultima_norma is None:
-                return
-            if not ultima_norma.get("Sanção"):
-                sanc = _extrair_data_fecho(buffer_norma_atual)
-                if sanc:
-                    ultima_norma["Sanção"] = sanc
-            buffer_norma_atual = ""
-
-        def _adicionar_alteracao(chave_alt: str):
-            nonlocal resultados, ultima_norma, seen_alteracoes
-            if ultima_norma is None:
-                return
-            if chave_alt in seen_alteracoes:
-                return
-            seen_alteracoes.add(chave_alt)
-
-            if ultima_norma["Alterações"] == "":
-                ultima_norma["Alterações"] = chave_alt
-            else:
-                resultados.append({
-                    "Página": "",
-                    "Coluna": "",
-                    "Sanção": "",
-                    "Sigla": "",
-                    "Número": "",
-                    "Ano": "",
-                    "Alterações": chave_alt
+            sigla = self._sigla_norma_publicada(tipo_raw)
+            if sigla:
+                normas.append({
+                    "pos": pos,
+                    "end": m.end(),
+                    "pagina": pagina,
+                    "coluna": "",   # mesmo padrão do Legislativo (texto corrido)
+                    "sigla": sigla,
+                    "numero": numero,
+                    "ano": ano
                 })
 
-        def _extrair_alteracoes_do_segmento(segmento: str):
-            for alt in self.norma_alterada_regex.finditer(segmento or ""):
-                tipo_alt_raw = (alt.group(1) or "").upper().strip()
-                num_alt = (alt.group(2) or "").replace(".", "").replace(" ", "")
-                ano_alt = alt.group(3) or alt.group(4) or ""
+        # ---- 3) Monta saída e processa alterações + sanção por bloco ----
+        resultados = []
 
-                sigla_alt = _normalizar_sigla(tipo_alt_raw)
+        for i, n in enumerate(normas):
+            start = n["end"]
+            end = normas[i + 1]["pos"] if i + 1 < len(normas) else len(full_text)
+            bloco = full_text[start:end]
 
-                # evita auto-referência
-                if ultima_norma and sigla_alt == ultima_norma["Sigla"] and num_alt == ultima_norma["Número"]:
-                    if (not ano_alt) or (ano_alt == ultima_norma["Ano"]):
-                        continue
+            linha = {
+                "Página": n["pagina"],
+                "Coluna": n["coluna"],
+                "Sanção": self._formatar_data_fecho(bloco),
+                "Sigla": n["sigla"],
+                "Número": n["numero"],
+                "Ano": n["ano"],
+                "Alterações": ""
+            }
+            resultados.append(linha)
 
-                chave = f"{sigla_alt} {num_alt}" + (f" {ano_alt}" if ano_alt else "")
-                _adicionar_alteracao(chave)
+            # dedup por norma (igual sua lógica)
+            seen_alteracoes = set()
 
-        def _achar_fim_lista(buffer: str):
-            candidatos = []
-            m_art = self.fim_lista_revogacoes_regex.search(buffer)
-            if m_art:
-                candidatos.append(m_art.start())
-            m_norma = self.norma_publicada_regex.search(buffer)
-            if m_norma:
-                candidatos.append(m_norma.start())
-            return min(candidatos) if candidatos else None
+            def _add_alt(chave: str):
+                nonlocal resultados
+                if chave in seen_alteracoes:
+                    return
+                seen_alteracoes.add(chave)
 
-        # ------------------------------------
-        # 2) Varre trechos em ordem
-        # ------------------------------------
-        for t in trechos:
-            pagina = t["pagina"]
-            coluna = t["coluna"]
-            text = t["texto"]
-
-            # acumula texto na norma corrente para achar o fecho depois
-            if ultima_norma is not None:
-                buffer_norma_atual += " " + text
-
-            # (A) Se estava capturando lista de revogações, continua até terminador estrutural
-            if capturando_revogacoes:
-                buffer_revogacoes += " " + text
-                fim_idx = _achar_fim_lista(buffer_revogacoes)
-                if fim_idx is not None:
-                    segmento = buffer_revogacoes[:fim_idx]
-                    _extrair_alteracoes_do_segmento(segmento)
-                    capturando_revogacoes = False
-                    buffer_revogacoes = ""
-
-            # (B) Detecta início de norma publicada
-            # Se achar uma nova norma, FINALIZA a anterior (pega sanção pelo fecho)
-            for m in self.norma_publicada_regex.finditer(text):
-                # antes de abrir a nova, finaliza a anterior
-                _finalizar_norma_corrente()
-
-                tipo_texto = _normalizar_tipo_publicado(m.group(1))
-                numero = (m.group(2) or "").replace(".", "").replace(" ", "")
-                ano = (m.group(3) or "").strip()
-
-                sigla = {
-                    "DELIBERAÇÃO DA MESA": "DLB",
-                    "PORTARIA DGE": "PRT",
-                    "PORTARIA PSEC/DGE": "PRT",
-                    "PORTARIA PRES/DGE": "PRT",
-                    "PORTARIA PRES/PSEC": "PRT",
-                    "ORDEM DE SERVIÇO PRES/PSEC": "OSV",
-                }.get(tipo_texto, None)
-
-                if sigla:
-                    linha = {
-                        "Página": pagina,
-                        "Coluna": coluna,
-                        "Sanção": "",   # preenchida pelo fecho
-                        "Sigla": sigla,
-                        "Número": numero,
-                        "Ano": ano,
-                        "Alterações": ""
-                    }
-                    resultados.append(linha)
-                    ultima_norma = linha
-                    seen_alteracoes = set()
-                    buffer_norma_atual = text  # reinicia o buffer a partir daqui
-
-            # (C) Lista longa por caput
-            caput_match = self.revogacoes_caput_regex.search(text)
-            if caput_match and ultima_norma is not None:
-                buffer_revogacoes = text[caput_match.end():].strip()
-                fim_idx = _achar_fim_lista(buffer_revogacoes)
-                if fim_idx is not None:
-                    segmento = buffer_revogacoes[:fim_idx]
-                    _extrair_alteracoes_do_segmento(segmento)
-                    capturando_revogacoes = False
-                    buffer_revogacoes = ""
+                if linha["Alterações"] == "":
+                    linha["Alterações"] = chave
                 else:
-                    capturando_revogacoes = True
+                    resultados.append({
+                        "Página": "",
+                        "Coluna": "",
+                        "Sanção": "",
+                        "Sigla": "",
+                        "Número": "",
+                        "Ano": "",
+                        "Alterações": chave
+                    })
 
-            # (C2) Revogação simples
-            sim_match = self.revogacao_simples_regex.search(text)
-            if sim_match and ultima_norma is not None:
-                trecho = text[sim_match.start():].strip()
-                fim_idx = _achar_fim_lista(trecho)
-                if fim_idx is not None:
-                    trecho = trecho[:fim_idx]
-                _extrair_alteracoes_do_segmento(trecho)
+            def _extrair_alteracoes(seg: str):
+                for alt in self.norma_alterada_regex.finditer(seg or ""):
+                    tipo_alt_raw = (alt.group(1) or "").upper().strip()
+                    num_alt = (alt.group(2) or "").replace(".", "").replace(" ", "")
+                    ano_alt = alt.group(3) or alt.group(4) or ""
+                    sigla_alt = self._normalizar_sigla(tipo_alt_raw)
 
-            # (C3) Sem efeito
-            sem_match = self.sem_efeito_regex.search(text)
-            if sem_match and ultima_norma is not None:
-                trecho = text[sem_match.start():].strip()
-                fim_idx = _achar_fim_lista(trecho)
-                if fim_idx is not None:
-                    trecho = trecho[:fim_idx]
-                _extrair_alteracoes_do_segmento(trecho)
+                    # evita auto-referência
+                    if sigla_alt == linha["Sigla"] and num_alt == linha["Número"]:
+                        if (not ano_alt) or (ano_alt == linha["Ano"]):
+                            continue
 
-            # (C4) Prorrogação
-            pror_match = self.prorrogacao_regex.search(text)
-            if pror_match and ultima_norma is not None:
-                trecho = text[pror_match.start():].strip()
-                fim_idx = _achar_fim_lista(trecho)
-                if fim_idx is not None:
-                    trecho = trecho[:fim_idx]
-                _extrair_alteracoes_do_segmento(trecho)
+                    chave = f"{sigla_alt} {num_alt}" + (f" {ano_alt}" if ano_alt else "")
+                    _add_alt(chave)
 
-            # (C5) Redação / "passa a vigorar"
-            red_match = self.redacao_regex.search(text)
-            if red_match and ultima_norma is not None:
-                start = max(0, red_match.start() - 400)
-                end = min(len(text), red_match.end() + 600)
-                trecho = text[start:end]
-                _extrair_alteracoes_do_segmento(trecho)
+            # ---- 3a) Lista longa por caput: do caput até Art. seguinte ou até próxima norma ----
+            cap = self.revogacoes_caput_regex.search(bloco)
+            if cap:
+                after = bloco[cap.end():]
+                fim = None
+                m_art = self.fim_lista_revogacoes_regex.search(after)
+                if m_art:
+                    fim = m_art.start()
+                segmento = after[:fim] if fim is not None else after
+                _extrair_alteracoes(segmento)
 
-            # (D) DCS
-            if self.regex_dcs.search(text):
-                # DCS não tem sanção por fecho (mantém vazio)
-                resultados.append({
-                    "Página": pagina,
-                    "Coluna": coluna,
-                    "Sanção": "",
-                    "Sigla": "DCS",
-                    "Número": "",
-                    "Ano": "",
-                    "Alterações": ""
-                })
+            # ---- 3b) Outros gatilhos (em janelas) ----
+            for gat in (self.revogacao_simples_regex, self.sem_efeito_regex, self.prorrogacao_regex):
+                for gm in gat.finditer(bloco):
+                    janela = bloco[gm.start(): gm.start() + 1200]  # janela grande
+                    _extrair_alteracoes(janela)
 
-        # Finaliza a última norma do documento (para preencher sanção)
-        _finalizar_norma_corrente()
+            for gm in self.redacao_regex.finditer(bloco):
+                start_j = max(0, gm.start() - 600)
+                end_j = min(len(bloco), gm.end() + 1200)
+                janela = bloco[start_j:end_j]
+                _extrair_alteracoes(janela)
 
-        doc.close()
+        # ---- 4) DCS (se quiser manter: varre texto todo e cria linhas) ----
+        # (mantive simples: se existir, adiciona uma linha)
+        if self.regex_dcs.search(full_text):
+            resultados.append({
+                "Página": "",
+                "Coluna": "",
+                "Sanção": "",
+                "Sigla": "DCS",
+                "Número": "",
+                "Ano": "",
+                "Alterações": ""
+            })
 
-        return pd.DataFrame(
-            resultados,
-            columns=['Página', 'Coluna', 'Sanção', 'Sigla', 'Número', 'Ano', 'Alterações']
-        )
+        return pd.DataFrame(resultados, columns=['Página', 'Coluna', 'Sanção', 'Sigla', 'Número', 'Ano', 'Alterações'])
 
     def to_csv(self):
         df = self.process_pdf()
