@@ -81,7 +81,35 @@ class LegislativeProcessor:
         for page in reader.pages:
             pt = page.extract_text() or ""
             pt = re.sub(r"[ \t]+", " ", pt)
-            pt = re.sub(r"\n+", "\n", pt)
+            def __init__(self, pdf_bytes: bytes):
+    self.pdf_bytes = pdf_bytes
+
+    reader = pypdf.PdfReader(io.BytesIO(self.pdf_bytes))
+
+    page_texts = []
+    for page in reader.pages:
+        pt = page.extract_text() or ""
+
+        # mantém a normalização de espaços/tabs (ok)
+        pt = re.sub(r"[ \t]+", " ", pt)
+
+        # NÃO colapsa \n+ (para não quebrar os regex com MULTILINE/^)
+        page_texts.append(pt)
+
+    self._offsets = []
+    parts = []
+    cursor = 0
+
+    for idx, pt in enumerate(page_texts, start=1):
+        chunk = pt + "\n"  # separador estável entre páginas
+        start = cursor
+        end = cursor + len(chunk)
+        self._offsets.append((start, end, idx))
+        parts.append(chunk)
+        cursor = end
+
+    self.text = "".join(parts)
+
             page_texts.append(pt)
 
         self._offsets = []  # (start, end, page_number)
