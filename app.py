@@ -1296,42 +1296,90 @@ def gerar_termos_llm(texto_original, termos_dicionario, num_termos):
     return []
 
 # --- Funções para Conversor de PDF em Texto (OCR) ---
+# Heurística leve para "rótulo ... valor" (principalmente valores monetários típicos do jornal)
+VAL_RE = re.compile(r"(?:(?:\d{1,3}(?:\.\d{3})*)|\d+)(?::\d{3})?\$\d{3}", re.UNICODE)
+
+def _split_label_value_line(line: str):
+    m_last = None
+    for m in VAL_RE.finditer(line):
+        m_last = m
+    if not m_last:
+        return None
+    label = line[:m_last.start()].strip(" .:-\t")
+    value = line[m_last.start():].strip()
+    if not label:
+        return None
+    return label, value
+
+def _detect_key_value_table_markdown(text: str):
+    lines = [ln.rstrip() for ln in (text or "").split("\n") if ln.strip()]
+    pairs = []
+    for ln in lines:
+        p = _split_label_value_line(ln)
+        if p:
+            pairs.append(p)
+    # só considera "tabela" se tiver um mínimo de pares
+    if len(pairs) < 3:
+        return None
+
+    out = ["| | |", "|---|---|"]
+    for label, value in pairs:
+        out.append(f"| {label} | {value} |")
+    return "\n".join(out)
+
+def _extract_pages_text_layout_from_pdf_path(pdf_path: str):
+    pages = []
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            txt = page.extract_text(layout=True) or ""
+            txt = txt.replace("\r", "")
+            pages.append(txt)
+    return pages
+
 def correct_ocr_text(raw_text):
     """
     Chama a API da Gemini para corrigir erros de OCR, normalizar a ortografia arcaica,
-    remover cabeçalho e formatar dados estruturados como tabela em Markdown — SEM negrito.
+    remover cabeçalho e (quando houver) preservar/formatar tabelas em Markdown válido — SEM negrito.
     """
     api_key = get_api_key()
     if not api_key:
         st.error("Chave de API do Gemini não encontrada. Verifique as variáveis de ambiente ou secrets.")
         return raw_text
+
     apiUrl = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+
     system_prompt = """
 Você é um corretor ortográfico e normalizador de texto brasileiro, especializado em documentos históricos.
 Sua tarefa é receber um texto bruto de OCR, corrigir erros e normalizar a ortografia arcaica (ex: 'Geraes' → 'Gerais', 'legaes' → 'legais').
-**Você deve retornar o resultado INTEIRO no formato Markdown.**
+Você deve retornar o resultado INTEIRO no formato Markdown.
 
 Regras estritas:
-- **NÃO use negrito (`**` ou `__`) em NENHUMA parte do texto.**
-- **Remova o cabeçalho do jornal/documento**: TÍTULO (ex: "MINAS GERAES"), data, número da edição, assinatura, venda avulsa, linhas divisórias. Mantenha apenas o corpo do texto.
-- **Corrija erros óbvios de OCR** e normalize ortografia arcaica.
-- **Se o texto contiver pares claros de "rótulo … valor" (ex: "Ativo … 450:200$000"), recrie-os como uma tabela Markdown com DUAS COLUNAS, SEM CABEÇALHOS.**
-  - A primeira coluna deve conter o item descritivo (ex: "Saldo de 1930", "Rendas arrecadadas").
-  - A segunda coluna deve conter o valor correspondente (ex: "13:868$112", "243:234$308").
-  - **Não crie cabeçalhos como "Item" e "Valor". Deixe as células vazias na primeira linha ou use apenas `--- | ---` como separador.**
-  - **Se houver títulos seccionais (ex: "Receita:", "Despesa:", "Situação patrimonial..."), inclua-os como linhas de tabela, com o texto na primeira coluna e a segunda coluna vazia.**
-  - **Mantenha a ordem exata dos itens do texto original. Não invente, não resuma, não omita.**
-  - **Nunca adicione linhas como "Total", "Subtotal", "Geral", etc., a menos que estejam explicitamente no texto.**
-- **Retorne APENAS o texto corrigido em Markdown**, sem explicações, sem blocos de código (ex: ```markdown```), sem introduções.
+- NÃO use negrito (** ou __) em NENHUMA parte do texto.
+- Remova o cabeçalho do jornal/documento: TÍTULO (ex: "MINAS GERAES"), data, número da edição, assinatura, venda avulsa, linhas divisórias. Mantenha apenas o corpo do texto.
+- Corrija erros óbvios de OCR e normalize ortografia arcaica.
+- Se o texto já contiver uma tabela Markdown (linhas começando com '|'), PRESERVE a tabela e apenas corrija OCR/ortografia dentro das células, sem alterar estrutura (quantidade de colunas/linhas).
+- Se o texto contiver pares claros de "rótulo … valor", recrie-os como uma tabela Markdown com DUAS COLUNAS, usando Markdown válido:
+  | | |
+  |---|---|
+  | rótulo | valor |
+  - Não use cabeçalhos como "Item" e "Valor" (a linha de cabeçalho deve ser vazia como acima).
+  - Se houver títulos seccionais (ex: "Receita:", "Despesa:", "Situação patrimonial..."), inclua-os como linhas de tabela, com o texto na primeira coluna e a segunda coluna vazia.
+  - Mantenha a ordem exata dos itens do texto original. Não invente, não resuma, não omita.
+  - Nunca adicione linhas como "Total", "Subtotal", "Geral", etc., a menos que estejam explicitamente no texto.
+- Retorne APENAS o texto corrigido em Markdown, sem explicações, sem blocos de código (```), sem introduções.
 """
+
     payload = {
         "contents": [{"parts": [{"text": raw_text}]}],
         "system_instruction": {"parts": [{"text": system_prompt}]},
     }
+
     try:
-        response = requests.post(apiUrl,
-                                headers={'Content-Type': 'application/json'},
-                                data=json.dumps(payload))
+        response = requests.post(
+            apiUrl,
+            headers={'Content-Type': 'application/json'},
+            data=json.dumps(payload)
+        )
         if response.status_code == 400:
             st.error(f"Erro detalhado da API (400): {response.text}. Verifique o tamanho do PDF.")
             return raw_text
@@ -1524,7 +1572,7 @@ def run_app():
         )
         st.session_state.data = data_selecionada
 
-        col1, col2, col3 = st.columns([1,1,1])
+        col1, col2, col3 = st.columns([1, 1, 1])
 
         with col1:
             if st.session_state.data > min_data:
@@ -1714,16 +1762,24 @@ def run_app():
                 input_filepath = input_file.name
 
             output_ocr_filepath = os.path.join(tempfile.gettempdir(), "output_ocr.pdf")
+            sidecar_txt_filepath = os.path.join(tempfile.gettempdir(), "texto_sidecar.txt")
             markdown_filepath = os.path.join(tempfile.gettempdir(), "texto_temporario.md")
             odt_filepath = os.path.join(tempfile.gettempdir(), "documento_final.odt")
 
             try:
                 with st.spinner("1/3: Extraindo texto bruto do PDF com OCR..."):
+                    # Ajustes: idioma + preprocessamento para melhorar OCR e estabilidade de colunas/tabelas
                     command_ocr = [
                         OCRMypdf_PATH,
                         "--force-ocr",
+                        "--language", "por",
+                        "--rotate-pages",
+                        "--deskew",
+                        "--clean",
+                        "--remove-background",
+                        "--oversample", "300",
                         "--sidecar",
-                        markdown_filepath,
+                        sidecar_txt_filepath,
                         input_filepath,
                         output_ocr_filepath
                     ]
@@ -1731,41 +1787,50 @@ def run_app():
                     subprocess.run(command_ocr, check=True, capture_output=True, text=True)
                     st.success("Extração de texto concluída.")
 
-                if os.path.exists(markdown_filepath):
-                    with open(markdown_filepath, "r") as f:
-                        sidecar_text_raw = f.read()
+                # Ajuste principal: usar o PDF OCRado para extrair texto com layout (coordenadas) e estabilizar tabelas
+                with st.spinner("2/3: Corrigindo ortografia arcaica, removendo cabeçalhos e estabilizando tabelas..."):
+                    # Extrai por página com layout a partir do PDF OCRado
+                    pages_text = _extract_pages_text_layout_from_pdf_path(output_ocr_filepath)
 
-                    with st.spinner("2/3: Corrigindo ortografia arcaica, removendo cabeçalhos e formatando tabelas via IA..."):
-                        sidecar_text_corrected = correct_ocr_text(sidecar_text_raw)
+                    corrected_pages = []
+                    for page_text in pages_text:
+                        # Tentativa determinística: se parecer tabela "rótulo ... valor", pré-monta tabela Markdown válida
+                        table_md = _detect_key_value_table_markdown(page_text)
+                        if table_md:
+                            corrected_pages.append(correct_ocr_text(table_md))
+                        else:
+                            corrected_pages.append(correct_ocr_text(page_text))
 
-                    with open(markdown_filepath, "w", encoding='utf-8') as f:
-                        f.write(sidecar_text_corrected)
+                    final_markdown = "\n\n".join(corrected_pages).strip()
 
-                    with st.spinner("3/3: Convertendo Markdown para arquivo ODT do LibreOffice..."):
-                        command_pandoc = [
-                            PANDOC_PATH,
-                            "--standalone",
-                            "-s",
-                            markdown_filepath,
-                            "-o",
-                            odt_filepath
-                        ]
-                        subprocess.run(command_pandoc, check=True, capture_output=True, text=True)
-                        st.success("Conversão para ODT concluída! Seu documento está pronto para download.")
+                    with open(markdown_filepath, "w", encoding="utf-8") as f:
+                        f.write(final_markdown if final_markdown else "")
 
-                    st.markdown("---")
-                    st.subheader("✅ Processo Finalizado com Sucesso")
-                    st.info("O download abaixo contém o texto corrigido, com ortografia normalizada e tabelas reestruturadas, pronto para edição no LibreOffice Writer.")
+                with st.spinner("3/3: Convertendo Markdown para arquivo ODT do LibreOffice..."):
+                    command_pandoc = [
+                        PANDOC_PATH,
+                        "--standalone",
+                        "-s",
+                        markdown_filepath,
+                        "-o",
+                        odt_filepath
+                    ]
+                    subprocess.run(command_pandoc, check=True, capture_output=True, text=True)
+                    st.success("Conversão para ODT concluída! Seu documento está pronto para download.")
 
-                    with open(odt_filepath, "rb") as f:
-                        st.download_button(
-                            label="⬇️ Baixar Documento Formatado (.odt)",
-                            data=f.read(),
-                            file_name="documento_final_formatado.odt",
-                            mime="application/vnd.oasis.opendocument.text"
-                        )
+                st.markdown("---")
+                st.subheader("✅ Processo Finalizado com Sucesso")
+                st.info("O download abaixo contém o texto corrigido, com ortografia normalizada e tabelas reestruturadas, pronto para edição no LibreOffice Writer.")
 
-                    st.markdown("---")
+                with open(odt_filepath, "rb") as f:
+                    st.download_button(
+                        label="⬇️ Baixar Documento Formatado (.odt)",
+                        data=f.read(),
+                        file_name="documento_final_formatado.odt",
+                        mime="application/vnd.oasis.opendocument.text"
+                    )
+
+                st.markdown("---")
 
             except subprocess.CalledProcessError as e:
                 st.error(f"Erro ao processar o arquivo (OCR ou Pandoc). Detalhes: {e.stderr}")
@@ -1773,7 +1838,7 @@ def run_app():
             except Exception as e:
                 st.error(f"Ocorreu um erro inesperado: {e}")
             finally:
-                for filepath in [input_filepath, output_ocr_filepath, markdown_filepath, odt_filepath]:
+                for filepath in [input_filepath, output_ocr_filepath, sidecar_txt_filepath, markdown_filepath, odt_filepath]:
                     if os.path.exists(filepath):
                         try:
                             os.unlink(filepath)
