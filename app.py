@@ -1776,7 +1776,6 @@ def run_app():
                         "--rotate-pages",
                         "--deskew",
                         "--clean",
-                        "--remove-background",
                         "--oversample", "300",
                         "--sidecar",
                         sidecar_txt_filepath,
