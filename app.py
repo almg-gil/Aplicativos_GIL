@@ -69,6 +69,7 @@ def classify_req(segment: str) -> str:
         return "Manifestação de apoio"
     return ""
 
+
 # --- Classes de Processamento para Extrator de Diários Oficiais ---
 class LegislativeProcessor:
     def __init__(self, pdf_bytes: bytes):
@@ -441,6 +442,7 @@ class LegislativeProcessor:
             "Pareceres": df_pareceres
         }
 
+
 class AdministrativeProcessor:
     def __init__(self, pdf_bytes: bytes):
         self.pdf_bytes = pdf_bytes
@@ -721,6 +723,7 @@ class AdministrativeProcessor:
         df.to_csv(output_csv, index=False, encoding="utf-8-sig")
         return output_csv.getvalue().encode('utf-8-sig')
 
+
 class ExecutiveProcessor:
     def __init__(self, pdf_bytes: bytes):
         self.pdf_bytes = self._clean_pdf_bytes(pdf_bytes)
@@ -892,8 +895,9 @@ class ExecutiveProcessor:
         if df.empty:
             return None
         output_csv = io.StringIO()
-        df.to_csv(output_csv, index=False, encoding="utf-8-sig")
+        df.to_csv(output_csv, index=False, encoding='utf-8-sig')
         return output_csv.getvalue().encode('utf-8')
+
 
 # --- Funções para Gerador de Links ---
 def dia_anterior():
@@ -904,6 +908,7 @@ def dia_posterior():
 
 def ir_hoje():
     st.session_state.data = datetime.today().date()
+
 
 # --- Funções para Chatbot ---
 DOCUMENTOS_PRE_CARREGADOS = {
@@ -1028,6 +1033,7 @@ Pergunta: {pergunta_usuario}
 """,
 }
 
+
 def carregar_documento_do_disco(caminho_arquivo):
     if not os.path.exists(caminho_arquivo):
         st.error(f"Erro: O arquivo '{caminho_arquivo}' não foi encontrado.")
@@ -1056,12 +1062,14 @@ def carregar_documento_do_disco(caminho_arquivo):
         st.error(f"Ocorreu um erro ao ler o arquivo: {e}")
         return None
 
+
 def get_api_key():
     api_key = os.environ.get("GOOGLE_API_KEY") or st.secrets.get("GOOGLE_API_KEY")
     if not api_key:
         st.error("Erro: A chave de API não foi configurada.")
         return None
     return api_key
+
 
 def answer_from_document(prompt_completo, api_key):
     if not api_key:
@@ -1083,6 +1091,7 @@ def answer_from_document(prompt_completo, api_key):
         return f"Erro na comunicação com a API: {http_err}"
     except Exception as e:
         return f"Ocorreu um erro: {e}"
+
 
 # --- Funções para Gerador de Termos e Resumos ---
 def carregar_dicionario_termos(nome_arquivo):
@@ -1121,6 +1130,7 @@ def carregar_dicionario_termos(nome_arquivo):
 
     return termos, mapa_hierarquia
 
+
 def carregar_exemplos_resumos(nome_arquivo):
     """
     Carrega exemplos de resumos de um arquivo CSV.
@@ -1148,6 +1158,7 @@ def carregar_exemplos_resumos(nome_arquivo):
         print(f"Erro ao carregar exemplos de resumo: {e}")
         return []
 
+
 def aplicar_logica_hierarquia(termos_sugeridos, mapa_hierarquia):
     termos_finais = set(termos_sugeridos)
     mapa_inverso_hierarquia = {}
@@ -1165,6 +1176,7 @@ def aplicar_logica_hierarquia(termos_sugeridos, mapa_hierarquia):
 
     termos_finais = termos_finais - termos_a_remover
     return list(termos_finais)
+
 
 def gerar_resumo(texto_original, exemplos_resumos):
     """
@@ -1242,6 +1254,7 @@ def gerar_resumo(texto_original, exemplos_resumos):
 
     return "Não foi possível gerar o resumo."
 
+
 def gerar_termos_llm(texto_original, termos_dicionario, num_termos):
     api_key = get_api_key()
 
@@ -1295,85 +1308,42 @@ def gerar_termos_llm(texto_original, termos_dicionario, num_termos):
 
     return []
 
+
 # --- Funções para Conversor de PDF em Texto (OCR) ---
-# Heurística leve para "rótulo ... valor" (principalmente valores monetários típicos do jornal)
-VAL_RE = re.compile(r"(?:(?:\d{1,3}(?:\.\d{3})*)|\d+)(?::\d{3})?\$\d{3}", re.UNICODE)
-
-def _split_label_value_line(line: str):
-    m_last = None
-    for m in VAL_RE.finditer(line):
-        m_last = m
-    if not m_last:
-        return None
-    label = line[:m_last.start()].strip(" .:-\t")
-    value = line[m_last.start():].strip()
-    if not label:
-        return None
-    return label, value
-
-def _detect_key_value_table_markdown(text: str):
-    lines = [ln.rstrip() for ln in (text or "").split("\n") if ln.strip()]
-    pairs = []
-    for ln in lines:
-        p = _split_label_value_line(ln)
-        if p:
-            pairs.append(p)
-    # só considera "tabela" se tiver um mínimo de pares
-    if len(pairs) < 3:
-        return None
-
-    out = ["| | |", "|---|---|"]
-    for label, value in pairs:
-        out.append(f"| {label} | {value} |")
-    return "\n".join(out)
-
-def _extract_pages_text_layout_from_pdf_path(pdf_path: str):
-    pages = []
-    with pdfplumber.open(pdf_path) as pdf:
-        for page in pdf.pages:
-            txt = page.extract_text(layout=True) or ""
-            txt = txt.replace("\r", "")
-            pages.append(txt)
-    return pages
-
 def correct_ocr_text(raw_text):
     """
     Chama a API da Gemini para corrigir erros de OCR, normalizar a ortografia arcaica,
-    remover cabeçalho e (quando houver) preservar/formatar tabelas em Markdown válido — SEM negrito.
+    remover cabeçalho e formatar dados estruturados como tabela em Markdown — SEM negrito.
     """
     api_key = get_api_key()
     if not api_key:
         st.error("Chave de API do Gemini não encontrada. Verifique as variáveis de ambiente ou secrets.")
         return raw_text
-
     apiUrl = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
-
     system_prompt = """
 Você é um corretor ortográfico e normalizador de texto brasileiro, especializado em documentos históricos.
 Sua tarefa é receber um texto bruto de OCR, corrigir erros e normalizar a ortografia arcaica (ex: 'Geraes' → 'Gerais', 'legaes' → 'legais').
-Você deve retornar o resultado INTEIRO no formato Markdown.
+**Você deve retornar o resultado INTEIRO no formato Markdown.**
 
 Regras estritas:
-- NÃO use negrito (** ou __) em NENHUMA parte do texto.
-- Remova o cabeçalho do jornal/documento: TÍTULO (ex: "MINAS GERAES"), data, número da edição, assinatura, venda avulsa, linhas divisórias. Mantenha apenas o corpo do texto.
-- Corrija erros óbvios de OCR e normalize ortografia arcaica.
-- Se o texto já contiver uma tabela Markdown (linhas começando com '|'), PRESERVE a tabela e apenas corrija OCR/ortografia dentro das células, sem alterar estrutura (quantidade de colunas/linhas).
-- Se o texto contiver pares claros de "rótulo … valor", recrie-os como uma tabela Markdown com DUAS COLUNAS, usando Markdown válido:
+- **NÃO use negrito (`**` ou `__`) em NENHUMA parte do texto.**
+- **Remova o cabeçalho do jornal/documento**: TÍTULO (ex: "MINAS GERAES"), data, número da edição, assinatura, venda avulsa, linhas divisórias. Mantenha apenas o corpo do texto.
+- **Corrija erros óbvios de OCR** e normalize ortografia arcaica.
+- **Se o texto contiver pares claros de "rótulo … valor" (ex: "Ativo … 450:200$000"), recrie-os como uma tabela Markdown com DUAS COLUNAS e cabeçalho vazio:**
   | | |
   |---|---|
   | rótulo | valor |
-  - Não use cabeçalhos como "Item" e "Valor" (a linha de cabeçalho deve ser vazia como acima).
-  - Se houver títulos seccionais (ex: "Receita:", "Despesa:", "Situação patrimonial..."), inclua-os como linhas de tabela, com o texto na primeira coluna e a segunda coluna vazia.
-  - Mantenha a ordem exata dos itens do texto original. Não invente, não resuma, não omita.
-  - Nunca adicione linhas como "Total", "Subtotal", "Geral", etc., a menos que estejam explicitamente no texto.
-- Retorne APENAS o texto corrigido em Markdown, sem explicações, sem blocos de código (```), sem introduções.
+  - **Não use cabeçalhos como "Item" e "Valor".**
+  - **Se houver títulos seccionais (ex: "Receita:", "Despesa:", "Situação patrimonial..."), inclua-os como linhas de tabela, com o texto na primeira coluna e a segunda coluna vazia.**
+  - **Mantenha a ordem exata dos itens do texto original. Não invente, não resuma, não omita.**
+  - **Nunca adicione linhas como "Total", "Subtotal", "Geral", etc., a menos que estejam explicitamente no texto.**
+  - **Toda linha da tabela deve ter exatamente duas colunas.**
+- **Retorne APENAS o texto corrigido em Markdown**, sem explicações, sem blocos de código (ex: ```markdown```), sem introduções.
 """
-
     payload = {
         "contents": [{"parts": [{"text": raw_text}]}],
         "system_instruction": {"parts": [{"text": system_prompt}]},
     }
-
     try:
         response = requests.post(
             apiUrl,
@@ -1392,6 +1362,54 @@ Regras estritas:
     except Exception as e:
         st.error(f"Ocorreu um erro inesperado durante a correção via Gemini: {e}. Exibindo texto bruto.")
     return raw_text
+
+
+# ====== AJUSTES OCR: funções auxiliares (sem mudar o restante do app) ======
+def chunk_text(text: str, max_chars: int = 8000) -> list[str]:
+    text = text or ""
+    if len(text) <= max_chars:
+        return [text]
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = min(len(text), start + max_chars)
+        cut = text.rfind("\n", start, end)
+        if cut == -1 or cut <= start + 2000:
+            cut = end
+        chunks.append(text[start:cut])
+        start = cut
+    return chunks
+
+
+def extract_text_from_ocr_pdf_by_columns(ocr_pdf_path: str, n_cols: int = 4, header_ratio: float = 0.18) -> str:
+    """
+    Extrai texto do PDF OCRado preservando ordem por colunas:
+    1) corta um topo (cabeçalho do jornal) por proporção
+    2) divide a área restante em N colunas e extrai texto com layout=True
+    """
+    parts = []
+    with pdfplumber.open(ocr_pdf_path) as pdf:
+        for p_i, page in enumerate(pdf.pages, start=1):
+            w, h = page.width, page.height
+
+            y0 = h * header_ratio
+            body = page.crop((0, y0, w, h))
+
+            col_width = w / n_cols
+            for c in range(n_cols):
+                x0 = c * col_width
+                x1 = (c + 1) * col_width
+
+                col = body.crop((x0, y0, x1, h))
+                txt = col.extract_text(layout=True) or ""
+                txt = txt.replace("\r", "").strip()
+
+                if txt:
+                    parts.append(f"\n\n=== Página {p_i} | Coluna {c+1} ===\n")
+                    parts.append(txt)
+
+    return "\n".join(parts).strip()
+
 
 # --- Função Principal da Aplicação ---
 def run_app():
@@ -1768,7 +1786,6 @@ def run_app():
 
             try:
                 with st.spinner("1/3: Extraindo texto bruto do PDF com OCR..."):
-                    # Ajustes: idioma + preprocessamento para melhorar OCR e estabilidade de colunas/tabelas
                     command_ocr = [
                         OCRMypdf_PATH,
                         "--force-ocr",
@@ -1784,26 +1801,24 @@ def run_app():
                     ]
 
                     subprocess.run(command_ocr, check=True, capture_output=True, text=True)
-                    st.success("Extração de texto concluída.")
+                    st.success("Extração de texto (OCR) concluída.")
 
-                # Ajuste principal: usar o PDF OCRado para extrair texto com layout (coordenadas) e estabilizar tabelas
-                with st.spinner("2/3: Corrigindo ortografia arcaica, removendo cabeçalhos e estabilizando tabelas..."):
-                    # Extrai por página com layout a partir do PDF OCRado
-                    pages_text = _extract_pages_text_layout_from_pdf_path(output_ocr_filepath)
+                with st.spinner("2/3: Extraindo texto do PDF OCRado por colunas (mais completo que sidecar)..."):
+                    raw_text = extract_text_from_ocr_pdf_by_columns(output_ocr_filepath, n_cols=4, header_ratio=0.18)
+                    if not raw_text.strip():
+                        st.warning("Não consegui extrair texto do PDF OCRado por colunas. Vou cair no sidecar como fallback.")
+                        if os.path.exists(sidecar_txt_filepath):
+                            with open(sidecar_txt_filepath, "r", encoding="utf-8", errors="ignore") as f:
+                                raw_text = f.read()
 
-                    corrected_pages = []
-                    for page_text in pages_text:
-                        # Tentativa determinística: se parecer tabela "rótulo ... valor", pré-monta tabela Markdown válida
-                        table_md = _detect_key_value_table_markdown(page_text)
-                        if table_md:
-                            corrected_pages.append(correct_ocr_text(table_md))
-                        else:
-                            corrected_pages.append(correct_ocr_text(page_text))
+                with st.spinner("2/3: Corrigindo ortografia arcaica, removendo cabeçalhos e formatando tabelas via IA (em partes)..."):
+                    corrected_parts = []
+                    for chunk in chunk_text(raw_text, max_chars=8000):
+                        corrected_parts.append(correct_ocr_text(chunk))
+                    final_markdown = "\n\n".join([p for p in corrected_parts if p])
 
-                    final_markdown = "\n\n".join(corrected_pages).strip()
-
-                    with open(markdown_filepath, "w", encoding="utf-8") as f:
-                        f.write(final_markdown if final_markdown else "")
+                with open(markdown_filepath, "w", encoding='utf-8') as f:
+                    f.write(final_markdown)
 
                 with st.spinner("3/3: Convertendo Markdown para arquivo ODT do LibreOffice..."):
                     command_pandoc = [
@@ -1843,6 +1858,7 @@ def run_app():
                             os.unlink(filepath)
                         except Exception:
                             pass
+
 
 if __name__ == "__main__":
     run_app()
