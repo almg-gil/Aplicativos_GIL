@@ -1,2 +1,3 @@
 ocrmypdf
 pandoc
+tesseract-ocr-por
