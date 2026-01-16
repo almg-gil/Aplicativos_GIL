@@ -69,7 +69,6 @@ def classify_req(segment: str) -> str:
         return "Manifestação de apoio"
     return ""
 
-
 # --- Classes de Processamento para Extrator de Diários Oficiais ---
 class LegislativeProcessor:
     def __init__(self, pdf_bytes: bytes):
@@ -442,7 +441,6 @@ class LegislativeProcessor:
             "Pareceres": df_pareceres
         }
 
-
 class AdministrativeProcessor:
     def __init__(self, pdf_bytes: bytes):
         self.pdf_bytes = pdf_bytes
@@ -723,7 +721,6 @@ class AdministrativeProcessor:
         df.to_csv(output_csv, index=False, encoding="utf-8-sig")
         return output_csv.getvalue().encode('utf-8-sig')
 
-
 class ExecutiveProcessor:
     def __init__(self, pdf_bytes: bytes):
         self.pdf_bytes = self._clean_pdf_bytes(pdf_bytes)
@@ -895,9 +892,8 @@ class ExecutiveProcessor:
         if df.empty:
             return None
         output_csv = io.StringIO()
-        df.to_csv(output_csv, index=False, encoding='utf-8-sig')
+        df.to_csv(output_csv, index=False, encoding="utf-8-sig")
         return output_csv.getvalue().encode('utf-8')
-
 
 # --- Funções para Gerador de Links ---
 def dia_anterior():
@@ -908,7 +904,6 @@ def dia_posterior():
 
 def ir_hoje():
     st.session_state.data = datetime.today().date()
-
 
 # --- Funções para Chatbot ---
 DOCUMENTOS_PRE_CARREGADOS = {
@@ -1033,7 +1028,6 @@ Pergunta: {pergunta_usuario}
 """,
 }
 
-
 def carregar_documento_do_disco(caminho_arquivo):
     if not os.path.exists(caminho_arquivo):
         st.error(f"Erro: O arquivo '{caminho_arquivo}' não foi encontrado.")
@@ -1062,14 +1056,12 @@ def carregar_documento_do_disco(caminho_arquivo):
         st.error(f"Ocorreu um erro ao ler o arquivo: {e}")
         return None
 
-
 def get_api_key():
     api_key = os.environ.get("GOOGLE_API_KEY") or st.secrets.get("GOOGLE_API_KEY")
     if not api_key:
         st.error("Erro: A chave de API não foi configurada.")
         return None
     return api_key
-
 
 def answer_from_document(prompt_completo, api_key):
     if not api_key:
@@ -1091,7 +1083,6 @@ def answer_from_document(prompt_completo, api_key):
         return f"Erro na comunicação com a API: {http_err}"
     except Exception as e:
         return f"Ocorreu um erro: {e}"
-
 
 # --- Funções para Gerador de Termos e Resumos ---
 def carregar_dicionario_termos(nome_arquivo):
@@ -1130,7 +1121,6 @@ def carregar_dicionario_termos(nome_arquivo):
 
     return termos, mapa_hierarquia
 
-
 def carregar_exemplos_resumos(nome_arquivo):
     """
     Carrega exemplos de resumos de um arquivo CSV.
@@ -1158,7 +1148,6 @@ def carregar_exemplos_resumos(nome_arquivo):
         print(f"Erro ao carregar exemplos de resumo: {e}")
         return []
 
-
 def aplicar_logica_hierarquia(termos_sugeridos, mapa_hierarquia):
     termos_finais = set(termos_sugeridos)
     mapa_inverso_hierarquia = {}
@@ -1176,7 +1165,6 @@ def aplicar_logica_hierarquia(termos_sugeridos, mapa_hierarquia):
 
     termos_finais = termos_finais - termos_a_remover
     return list(termos_finais)
-
 
 def gerar_resumo(texto_original, exemplos_resumos):
     """
@@ -1254,7 +1242,6 @@ def gerar_resumo(texto_original, exemplos_resumos):
 
     return "Não foi possível gerar o resumo."
 
-
 def gerar_termos_llm(texto_original, termos_dicionario, num_termos):
     api_key = get_api_key()
 
@@ -1308,7 +1295,6 @@ def gerar_termos_llm(texto_original, termos_dicionario, num_termos):
 
     return []
 
-
 # --- Funções para Conversor de PDF em Texto (OCR) ---
 def correct_ocr_text(raw_text):
     """
@@ -1329,15 +1315,13 @@ Regras estritas:
 - **NÃO use negrito (`**` ou `__`) em NENHUMA parte do texto.**
 - **Remova o cabeçalho do jornal/documento**: TÍTULO (ex: "MINAS GERAES"), data, número da edição, assinatura, venda avulsa, linhas divisórias. Mantenha apenas o corpo do texto.
 - **Corrija erros óbvios de OCR** e normalize ortografia arcaica.
-- **Se o texto contiver pares claros de "rótulo … valor" (ex: "Ativo … 450:200$000"), recrie-os como uma tabela Markdown com DUAS COLUNAS e cabeçalho vazio:**
-  | | |
-  |---|---|
-  | rótulo | valor |
-  - **Não use cabeçalhos como "Item" e "Valor".**
+- **Se o texto contiver pares claros de "rótulo … valor" (ex: "Ativo … 450:200$000"), recrie-os como uma tabela Markdown com DUAS COLUNAS, SEM CABEÇALHOS.**
+  - A primeira coluna deve conter o item descritivo (ex: "Saldo de 1930", "Rendas arrecadadas").
+  - A segunda coluna deve conter o valor correspondente (ex: "13:868$112", "243:234$308").
+  - **Não crie cabeçalhos como "Item" e "Valor". Deixe as células vazias na primeira linha ou use apenas `--- | ---` como separador.**
   - **Se houver títulos seccionais (ex: "Receita:", "Despesa:", "Situação patrimonial..."), inclua-os como linhas de tabela, com o texto na primeira coluna e a segunda coluna vazia.**
   - **Mantenha a ordem exata dos itens do texto original. Não invente, não resuma, não omita.**
   - **Nunca adicione linhas como "Total", "Subtotal", "Geral", etc., a menos que estejam explicitamente no texto.**
-  - **Toda linha da tabela deve ter exatamente duas colunas.**
 - **Retorne APENAS o texto corrigido em Markdown**, sem explicações, sem blocos de código (ex: ```markdown```), sem introduções.
 """
     payload = {
@@ -1345,11 +1329,9 @@ Regras estritas:
         "system_instruction": {"parts": [{"text": system_prompt}]},
     }
     try:
-        response = requests.post(
-            apiUrl,
-            headers={'Content-Type': 'application/json'},
-            data=json.dumps(payload)
-        )
+        response = requests.post(apiUrl,
+                                headers={'Content-Type': 'application/json'},
+                                data=json.dumps(payload))
         if response.status_code == 400:
             st.error(f"Erro detalhado da API (400): {response.text}. Verifique o tamanho do PDF.")
             return raw_text
@@ -1362,54 +1344,6 @@ Regras estritas:
     except Exception as e:
         st.error(f"Ocorreu um erro inesperado durante a correção via Gemini: {e}. Exibindo texto bruto.")
     return raw_text
-
-
-# ====== AJUSTES OCR: funções auxiliares (sem mudar o restante do app) ======
-def chunk_text(text: str, max_chars: int = 8000) -> list[str]:
-    text = text or ""
-    if len(text) <= max_chars:
-        return [text]
-    chunks = []
-    start = 0
-    while start < len(text):
-        end = min(len(text), start + max_chars)
-        cut = text.rfind("\n", start, end)
-        if cut == -1 or cut <= start + 2000:
-            cut = end
-        chunks.append(text[start:cut])
-        start = cut
-    return chunks
-
-
-def extract_text_from_ocr_pdf_by_columns(ocr_pdf_path: str, n_cols: int = 4, header_ratio: float = 0.18) -> str:
-    """
-    Extrai texto do PDF OCRado preservando ordem por colunas:
-    1) corta um topo (cabeçalho do jornal) por proporção
-    2) divide a área restante em N colunas e extrai texto com layout=True
-    """
-    parts = []
-    with pdfplumber.open(ocr_pdf_path) as pdf:
-        for p_i, page in enumerate(pdf.pages, start=1):
-            w, h = page.width, page.height
-
-            y0 = h * header_ratio
-            body = page.crop((0, y0, w, h))
-
-            col_width = w / n_cols
-            for c in range(n_cols):
-                x0 = c * col_width
-                x1 = (c + 1) * col_width
-
-                col = body.crop((x0, y0, x1, h))
-                txt = col.extract_text(layout=True) or ""
-                txt = txt.replace("\r", "").strip()
-
-                if txt:
-                    parts.append(f"\n\n=== Página {p_i} | Coluna {c+1} ===\n")
-                    parts.append(txt)
-
-    return "\n".join(parts).strip()
-
 
 # --- Função Principal da Aplicação ---
 def run_app():
@@ -1590,7 +1524,7 @@ def run_app():
         )
         st.session_state.data = data_selecionada
 
-        col1, col2, col3 = st.columns([1, 1, 1])
+        col1, col2, col3 = st.columns([1,1,1])
 
         with col1:
             if st.session_state.data > min_data:
@@ -1780,7 +1714,6 @@ def run_app():
                 input_filepath = input_file.name
 
             output_ocr_filepath = os.path.join(tempfile.gettempdir(), "output_ocr.pdf")
-            sidecar_txt_filepath = os.path.join(tempfile.gettempdir(), "texto_sidecar.txt")
             markdown_filepath = os.path.join(tempfile.gettempdir(), "texto_temporario.md")
             odt_filepath = os.path.join(tempfile.gettempdir(), "documento_final.odt")
 
@@ -1789,62 +1722,50 @@ def run_app():
                     command_ocr = [
                         OCRMypdf_PATH,
                         "--force-ocr",
-                        "--language", "por",
-                        "--rotate-pages",
-                        "--deskew",
-                        "--clean",
-                        "--oversample", "300",
                         "--sidecar",
-                        sidecar_txt_filepath,
+                        markdown_filepath,
                         input_filepath,
                         output_ocr_filepath
                     ]
 
                     subprocess.run(command_ocr, check=True, capture_output=True, text=True)
-                    st.success("Extração de texto (OCR) concluída.")
+                    st.success("Extração de texto concluída.")
 
-                with st.spinner("2/3: Extraindo texto do PDF OCRado por colunas (mais completo que sidecar)..."):
-                    raw_text = extract_text_from_ocr_pdf_by_columns(output_ocr_filepath, n_cols=4, header_ratio=0.18)
-                    if not raw_text.strip():
-                        st.warning("Não consegui extrair texto do PDF OCRado por colunas. Vou cair no sidecar como fallback.")
-                        if os.path.exists(sidecar_txt_filepath):
-                            with open(sidecar_txt_filepath, "r", encoding="utf-8", errors="ignore") as f:
-                                raw_text = f.read()
+                if os.path.exists(markdown_filepath):
+                    with open(markdown_filepath, "r") as f:
+                        sidecar_text_raw = f.read()
 
-                with st.spinner("2/3: Corrigindo ortografia arcaica, removendo cabeçalhos e formatando tabelas via IA (em partes)..."):
-                    corrected_parts = []
-                    for chunk in chunk_text(raw_text, max_chars=8000):
-                        corrected_parts.append(correct_ocr_text(chunk))
-                    final_markdown = "\n\n".join([p for p in corrected_parts if p])
+                    with st.spinner("2/3: Corrigindo ortografia arcaica, removendo cabeçalhos e formatando tabelas via IA..."):
+                        sidecar_text_corrected = correct_ocr_text(sidecar_text_raw)
 
-                with open(markdown_filepath, "w", encoding='utf-8') as f:
-                    f.write(final_markdown)
+                    with open(markdown_filepath, "w", encoding='utf-8') as f:
+                        f.write(sidecar_text_corrected)
 
-                with st.spinner("3/3: Convertendo Markdown para arquivo ODT do LibreOffice..."):
-                    command_pandoc = [
-                        PANDOC_PATH,
-                        "--standalone",
-                        "-s",
-                        markdown_filepath,
-                        "-o",
-                        odt_filepath
-                    ]
-                    subprocess.run(command_pandoc, check=True, capture_output=True, text=True)
-                    st.success("Conversão para ODT concluída! Seu documento está pronto para download.")
+                    with st.spinner("3/3: Convertendo Markdown para arquivo ODT do LibreOffice..."):
+                        command_pandoc = [
+                            PANDOC_PATH,
+                            "--standalone",
+                            "-s",
+                            markdown_filepath,
+                            "-o",
+                            odt_filepath
+                        ]
+                        subprocess.run(command_pandoc, check=True, capture_output=True, text=True)
+                        st.success("Conversão para ODT concluída! Seu documento está pronto para download.")
 
-                st.markdown("---")
-                st.subheader("✅ Processo Finalizado com Sucesso")
-                st.info("O download abaixo contém o texto corrigido, com ortografia normalizada e tabelas reestruturadas, pronto para edição no LibreOffice Writer.")
+                    st.markdown("---")
+                    st.subheader("✅ Processo Finalizado com Sucesso")
+                    st.info("O download abaixo contém o texto corrigido, com ortografia normalizada e tabelas reestruturadas, pronto para edição no LibreOffice Writer.")
 
-                with open(odt_filepath, "rb") as f:
-                    st.download_button(
-                        label="⬇️ Baixar Documento Formatado (.odt)",
-                        data=f.read(),
-                        file_name="documento_final_formatado.odt",
-                        mime="application/vnd.oasis.opendocument.text"
-                    )
+                    with open(odt_filepath, "rb") as f:
+                        st.download_button(
+                            label="⬇️ Baixar Documento Formatado (.odt)",
+                            data=f.read(),
+                            file_name="documento_final_formatado.odt",
+                            mime="application/vnd.oasis.opendocument.text"
+                        )
 
-                st.markdown("---")
+                    st.markdown("---")
 
             except subprocess.CalledProcessError as e:
                 st.error(f"Erro ao processar o arquivo (OCR ou Pandoc). Detalhes: {e.stderr}")
@@ -1852,13 +1773,12 @@ def run_app():
             except Exception as e:
                 st.error(f"Ocorreu um erro inesperado: {e}")
             finally:
-                for filepath in [input_filepath, output_ocr_filepath, sidecar_txt_filepath, markdown_filepath, odt_filepath]:
+                for filepath in [input_filepath, output_ocr_filepath, markdown_filepath, odt_filepath]:
                     if os.path.exists(filepath):
                         try:
                             os.unlink(filepath)
                         except Exception:
                             pass
-
 
 if __name__ == "__main__":
     run_app()
