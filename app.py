@@ -1188,7 +1188,7 @@ def gerar_resumo(texto_original, exemplos_resumos):
     - Evite o uso de verbos com partícula apassivadora ou de indeterminação do sujeito.
     - Evite iniciar frases com 'Esta política', 'A lei' ou termos semelhantes.
     - Separe as siglas com o caractere "–".
-    - Inicie o resumo diretamente com um verbo na terceira pessoa do singular, sem sujeito explícito.
+    - Inicie o resumo com sujeito explícito seguido de verbo (Ex: "A norma estabelece..."; "O decreto determina..."; "A lei dispõe...")
     - Não inclua a parte sobre a vigência da lei.
     - O resumo deve focar em três pontos principais:
         1. O que o programa institui e a quem se destina.
