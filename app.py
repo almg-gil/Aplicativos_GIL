@@ -1186,9 +1186,9 @@ def gerar_resumo(texto_original, exemplos_resumos):
     - Use verbos na terceira pessoa do singular, na voz ativa.
     - Para descrever ações ou responsabilidades de autoridades, prefira o uso de verbos auxiliares como 'deve' ou 'pode' para indicar obrigação ou possibilidade.
     - Evite o uso de verbos com partícula apassivadora ou de indeterminação do sujeito.
-    - Evite iniciar frases com 'Esta política', 'A lei' ou termos semelhantes.
     - Separe as siglas com o caractere "–".
     - Inicie o resumo com sujeito explícito seguido de verbo (Ex: "A norma estabelece..."; "O decreto determina..."; "A lei dispõe...")
+    - Sempre que citar uma data, utilize o formato dd/mm/aaaa, quando o mês for entre outubro e dezembro, e dd/m/aaaa, quando o mês for entre janeiro e setembro (Ex: 23/3/2026, 12/12/2030, 15/1/2025.)
     - Não inclua a parte sobre a vigência da lei.
     - O resumo deve focar em três pontos principais:
         1. O que o programa institui e a quem se destina.
