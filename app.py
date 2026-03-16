@@ -7,6 +7,7 @@ import io
 import csv
 import fitz  # PyMuPDF
 import requests
+import base64
 import pdfplumber
 import json
 from datetime import datetime, timedelta, date
@@ -1346,6 +1347,50 @@ Regras estritas:
     return raw_text
 
 # --- Função Principal da Aplicação ---
+def baixar_pdf_jornal_mg_por_link(url_pagina: str) -> bytes:
+    """
+    Recebe o link da página do Jornal Minas Gerais e retorna o PDF em bytes.
+    Exemplo de link:
+    https://www.jornalminasgerais.mg.gov.br/edicao-do-dia?dados=...
+    """
+
+    try:
+        # extrai o JSON codificado no parâmetro "dados"
+        match = re.search(r'dados=([^&]+)', url_pagina)
+        if not match:
+            raise ValueError("Link inválido.")
+
+        dados_codificados = match.group(1)
+
+        # decodifica o JSON da URL
+        json_str = requests.utils.unquote(dados_codificados)
+        dados = json.loads(json_str)
+
+        data_iso = dados["dataPublicacaoSelecionada"]
+        data = data_iso.split("T")[0]
+
+        # chama API
+        api_url = f"https://www.jornalminasgerais.mg.gov.br/api/v1/Jornal/ObterEdicaoPorDataPublicacao?dataPublicacao={data}"
+
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://www.jornalminasgerais.mg.gov.br/"
+        }
+
+        r = requests.get(api_url, headers=headers, timeout=60)
+        r.raise_for_status()
+
+        dados_api = r.json()
+
+        base64_pdf = dados_api["dados"]["arquivoCadernoPrincipal"]["arquivo"]
+
+        pdf_bytes = base64.b64decode(base64_pdf)
+
+        return pdf_bytes
+
+    except Exception as e:
+        st.error(f"Erro ao obter PDF do Jornal Minas Gerais: {e}")
+        return None
 def run_app():
     st.set_page_config(page_title="Assistente Virtual da GIL")
 
@@ -1406,9 +1451,13 @@ def run_app():
         st.divider()
 
         pdf_bytes = None
+        
         if diario_escolhido == 'Executivo':
-            modo = "Upload de arquivo"
-            st.info("Para o Diário do Executivo, é necessário fazer o upload do arquivo.")
+            modo = st.radio(
+                "Como deseja fornecer o Diário do Executivo?",
+                ("Upload de arquivo", "Link do Jornal Minas Gerais"),
+                horizontal=True
+            )
         else:
             modo = st.radio(
                 "Como deseja fornecer o PDF?",
@@ -1424,11 +1473,29 @@ def run_app():
             if uploaded_file is not None:
                 pdf_bytes = uploaded_file.read()
         else:
-            url = st.text_input("Cole o link do PDF aqui:")
+            if diario_escolhido == "Executivo":
+                url = st.text_input("Cole o link da edição do Jornal Minas Gerais:")
+            else:
+                url = st.text_input("Cole o link do PDF aqui:")
             if url:
                 try:
-                    with st.spinner("Baixando PDF..."):
-                        resp = requests.get(url, timeout=30)
+                   with st.spinner("Obtendo PDF..."):
+
+                        if diario_escolhido == "Executivo":
+                            pdf_bytes = baixar_pdf_jornal_mg_por_link(url)
+
+                        else:
+                            resp = requests.get(url, timeout=30)
+
+                            if resp.status_code == 200:
+                                ctype = resp.headers.get("Content-Type", "")
+                                if ("pdf" not in ctype.lower()) and (not url.lower().endswith(".pdf")):
+                                    st.warning("O link não parece apontar para um PDF (Content-Type != PDF). Tentarei processar mesmo assim.")
+
+                                pdf_bytes = resp.content
+
+                            else:
+                                st.error(f"Falha ao baixar (status {resp.status_code}).")
                         if resp.status_code == 200:
                             ctype = resp.headers.get("Content-Type", "")
                             if ("pdf" not in ctype.lower()) and (not url.lower().endswith(".pdf")):
