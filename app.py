@@ -7,6 +7,7 @@ import io
 import csv
 import fitz  # PyMuPDF
 import requests
+import base64
 import pdfplumber
 import json
 from datetime import datetime, timedelta, date
