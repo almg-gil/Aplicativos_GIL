@@ -1450,12 +1450,13 @@ def run_app():
         st.divider()
 
         pdf_bytes = None
+        
         if diario_escolhido == 'Executivo':
-    modo = st.radio(
-        "Como deseja fornecer o Diário do Executivo?",
-        ("Upload de arquivo", "Link do Jornal Minas Gerais"),
-        horizontal=True
-    )
+            modo = st.radio(
+                "Como deseja fornecer o Diário do Executivo?",
+                ("Upload de arquivo", "Link do Jornal Minas Gerais"),
+                horizontal=True
+            )
         else:
             modo = st.radio(
                 "Como deseja fornecer o PDF?",
@@ -1472,13 +1473,22 @@ def run_app():
                 pdf_bytes = uploaded_file.read()
         else:
             if diario_escolhido == "Executivo":
-    url = st.text_input("Cole o link da edição do Jornal Minas Gerais:")
-else:
-    url = st.text_input("Cole o link do PDF aqui:")
+                url = st.text_input("Cole o link da edição do Jornal Minas Gerais:")
+            else:
+                url = st.text_input("Cole o link do PDF aqui:")
             if url:
                 try:
-                    with st.spinner("Baixando PDF..."):
-                        resp = requests.get(url, timeout=30)
+                   with st.spinner("Obtendo PDF..."):
+
+                        if diario_escolhido == "Executivo":
+                                pdf_bytes = baixar_pdf_jornal_mg_por_link(url)
+
+                        else:
+                            resp = requests.get(url, timeout=30)
+                            if resp.status_code == 200:
+                                pdf_bytes = resp.content
+                            else:
+                                st.error(f"Falha ao baixar (status {resp.status_code}).")
                         if resp.status_code == 200:
                             ctype = resp.headers.get("Content-Type", "")
                             if ("pdf" not in ctype.lower()) and (not url.lower().endswith(".pdf")):
