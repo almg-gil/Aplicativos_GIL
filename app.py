@@ -1482,12 +1482,18 @@ def run_app():
                    with st.spinner("Obtendo PDF..."):
 
                         if diario_escolhido == "Executivo":
-                                pdf_bytes = baixar_pdf_jornal_mg_por_link(url)
+                            pdf_bytes = baixar_pdf_jornal_mg_por_link(url)
 
                         else:
                             resp = requests.get(url, timeout=30)
+
                             if resp.status_code == 200:
+                                ctype = resp.headers.get("Content-Type", "")
+                                if ("pdf" not in ctype.lower()) and (not url.lower().endswith(".pdf")):
+                                    st.warning("O link não parece apontar para um PDF (Content-Type != PDF). Tentarei processar mesmo assim.")
+
                                 pdf_bytes = resp.content
+
                             else:
                                 st.error(f"Falha ao baixar (status {resp.status_code}).")
                         if resp.status_code == 200:
