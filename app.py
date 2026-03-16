@@ -7,7 +7,6 @@ import io
 import csv
 import fitz  # PyMuPDF
 import requests
-import base64
 import pdfplumber
 import json
 from datetime import datetime, timedelta, date
@@ -1408,11 +1407,8 @@ def run_app():
 
         pdf_bytes = None
         if diario_escolhido == 'Executivo':
-    modo = st.radio(
-        "Como deseja fornecer o PDF?",
-        ("Upload de arquivo", "Link da página do Jornal MG"),
-        horizontal=True
-    )
+            modo = "Upload de arquivo"
+            st.info("Para o Diário do Executivo, é necessário fazer o upload do arquivo.")
         else:
             modo = st.radio(
                 "Como deseja fornecer o PDF?",
