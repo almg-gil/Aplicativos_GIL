@@ -1429,7 +1429,7 @@ def run_app():
         st.divider()
 
         pdf_bytes = None
-        if diario_escolhido == 'Executivo':
+    if diario_escolhido == 'Executivo':
     modo = st.radio(
         "Como deseja fornecer o PDF?",
         ("Upload de arquivo", "Link da página do Jornal MG"),
