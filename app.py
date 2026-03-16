@@ -7,7 +7,6 @@ import io
 import csv
 import fitz  # PyMuPDF
 import requests
-import base64
 import pdfplumber
 import json
 from datetime import datetime, timedelta, date
@@ -1347,28 +1346,6 @@ Regras estritas:
     return raw_text
 
 # --- Função Principal da Aplicação ---
-def baixar_pdf_jornal_mg(data_str):
-    """
-    Baixa o PDF do Jornal Minas Gerais usando a API interna.
-    data_str deve estar no formato YYYY-MM-DD
-    """
-    url = f"https://www.jornalminasgerais.mg.gov.br/api/Edicao/ObterEdicaoPorDataPublicacao?dataPublicacao={data_str}"
-
-    try:
-        resp = requests.get(url, timeout=30)
-        resp.raise_for_status()
-
-        dados = resp.json()
-
-        base64_pdf = dados["arquivoCadernoPrincipal"]["arquivo"]
-
-        pdf_bytes = base64.b64decode(base64_pdf)
-
-        return pdf_bytes
-
-    except Exception as e:
-        st.error(f"Erro ao baixar edição: {e}")
-        return None
 def run_app():
     st.set_page_config(page_title="Assistente Virtual da GIL")
 
@@ -1429,12 +1406,9 @@ def run_app():
         st.divider()
 
         pdf_bytes = None
-    if diario_escolhido == 'Executivo':
-    modo = st.radio(
-        "Como deseja fornecer o PDF?",
-        ("Upload de arquivo", "Link da página do Jornal MG"),
-        horizontal=True
-    )
+        if diario_escolhido == 'Executivo':
+            modo = "Upload de arquivo"
+            st.info("Para o Diário do Executivo, é necessário fazer o upload do arquivo.")
         else:
             modo = st.radio(
                 "Como deseja fornecer o PDF?",
