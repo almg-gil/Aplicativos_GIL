@@ -735,7 +735,7 @@ class ExecutiveProcessor:
 
         self.norma_regex = re.compile(
     r'(?:^|\n|\r|\f)\s*(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]\s*([\d\s\.]+),?\s*DE\s+(.+?)(?:\n|$)',
-    re.IGNORECASE | re.DOTALL
+    re.DOTALL
         )
         self.comandos_regex = re.compile(
             r'(Ficam\s+revogados|Fica\s+acrescentado|Ficam\s+alterados|passando\s+o\s+item|passa\s+a\s+vigorar|passam\s+a\s+vigorar)',
