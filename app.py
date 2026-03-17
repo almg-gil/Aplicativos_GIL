@@ -734,7 +734,8 @@ class ExecutiveProcessor:
         }
 
         self.norma_regex = re.compile(
-            r'\b(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]\s*([\d\s\.]+),\s*DE\s+([A-Z\s\d]+)\b'
+    r'\b(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]\s*([\d\s\.]+),?\s*DE\s+(\d{1,2}\s+DE\s+[A-ZÇÃÁÉÍÓÔÚ]+\s+DE\s+\d{4})',
+    re.IGNORECASE
         )
         self.comandos_regex = re.compile(
             r'(Ficam\s+revogados|Fica\s+acrescentado|Ficam\s+alterados|passando\s+o\s+item|passa\s+a\s+vigorar|passam\s+a\s+vigorar)',
@@ -820,10 +821,20 @@ class ExecutiveProcessor:
                     numero = match.group(2).replace(" ", "").replace(".", "")
                     data_texto = match.group(3).strip()
                     try:
-                        partes = data_texto.split(" DE ")
-                        dia = partes[0].zfill(2)
-                        mes = meses[partes[1].upper()]
-                        ano = partes[2]
+                        dm = re.search(r'(\d{1,2})\s+DE\s+([A-ZÇÃÁÉÍÓÔÚ]+)\s+DE\s+(\d{4})', data_texto.upper())
+
+                        if dm:
+                            dia = dm.group(1).zfill(2)
+                            mes_nome = dm.group(2)
+                            mes = meses.get(mes_nome, "")
+                            ano = dm.group(3)
+
+                            if mes:
+                                sancao = f"{dia}/{mes}/{ano}"
+                            else:
+                                sancao = ""
+                        else:
+                            sancao = ""
                         sancao = f"{dia}/{mes}/{ano}"
                     except:
                         sancao = ""
