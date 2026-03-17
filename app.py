@@ -1504,8 +1504,8 @@ def run_app():
 
                                 pdf_bytes = resp.content
 
-                            else:
-                                st.error(f"Falha ao baixar (status {resp.status_code}).")
+                                else:
+                                    st.error(f"Falha ao baixar (status {resp.status_code}).")
                         if resp.status_code == 200:
                             ctype = resp.headers.get("Content-Type", "")
                             if ("pdf" not in ctype.lower()) and (not url.lower().endswith(".pdf")):
