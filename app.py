@@ -734,7 +734,7 @@ class ExecutiveProcessor:
         }
 
         self.norma_regex = re.compile(
-    r'\b(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]\s*([\d\s\.]+),?\s*DE\s+(\d{1,2}\s+DE\s+[A-ZÇÃÁÉÍÓÔÚ]+\s+DE\s+\d{4})',
+    r'^(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]\s*([\d\s\.]+),?\s*DE\s+(\d{1,2}\s+DE\s+[A-ZÇÃÁÉÍÓÔÚ]+\s+DE\s+\d{4})',
     re.IGNORECASE
         )
         self.comandos_regex = re.compile(
@@ -788,7 +788,7 @@ class ExecutiveProcessor:
                     largura, altura = pagina.width, pagina.height
                     for col_num, (x0, x1) in enumerate([(0, largura/2), (largura/2, largura)], start=1):
                         coluna = pagina.crop((x0, 0, x1, altura)).extract_text(layout=True) or ""
-                        texto_limpo = re.sub(r'\s+', ' ', coluna).strip()
+                        texto_limpo = re.sub(r'[ \t]+', ' ', coluna).strip()
                         trechos.append({
                             "pagina": i + 1,
                             "coluna": col_num,
