@@ -734,8 +734,7 @@ class ExecutiveProcessor:
         }
 
         self.norma_regex = re.compile(
-    r'^(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]\s*([\d\s\.]+),?\s*DE\s+(\d{1,2}\s+DE\s+[A-ZÇÃÁÉÍÓÔÚ]+\s+DE\s+\d{4})',
-    re.IGNORECASE
+            r'\b(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]\s*([\d\s\.]+),\s*DE\s+([A-Z\s\d]+)\b'
         )
         self.comandos_regex = re.compile(
             r'(Ficam\s+revogados|Fica\s+acrescentado|Ficam\s+alterados|passando\s+o\s+item|passa\s+a\s+vigorar|passam\s+a\s+vigorar)',
@@ -788,7 +787,7 @@ class ExecutiveProcessor:
                     largura, altura = pagina.width, pagina.height
                     for col_num, (x0, x1) in enumerate([(0, largura/2), (largura/2, largura)], start=1):
                         coluna = pagina.crop((x0, 0, x1, altura)).extract_text(layout=True) or ""
-                        texto_limpo = re.sub(r'[ \t]+', ' ', coluna).strip()
+                        texto_limpo = re.sub(r'\s+', ' ', coluna).strip()
                         trechos.append({
                             "pagina": i + 1,
                             "coluna": col_num,
@@ -821,20 +820,10 @@ class ExecutiveProcessor:
                     numero = match.group(2).replace(" ", "").replace(".", "")
                     data_texto = match.group(3).strip()
                     try:
-                        dm = re.search(r'(\d{1,2})\s+DE\s+([A-ZÇÃÁÉÍÓÔÚ]+)\s+DE\s+(\d{4})', data_texto.upper())
-
-                        if dm:
-                            dia = dm.group(1).zfill(2)
-                            mes_nome = dm.group(2)
-                            mes = meses.get(mes_nome, "")
-                            ano = dm.group(3)
-
-                            if mes:
-                                sancao = f"{dia}/{mes}/{ano}"
-                            else:
-                                sancao = ""
-                        else:
-                            sancao = ""
+                        partes = data_texto.split(" DE ")
+                        dia = partes[0].zfill(2)
+                        mes = meses[partes[1].upper()]
+                        ano = partes[2]
                         sancao = f"{dia}/{mes}/{ano}"
                     except:
                         sancao = ""
@@ -1490,25 +1479,23 @@ def run_app():
                 url = st.text_input("Cole o link do PDF aqui:")
             if url:
                 try:
-                  with st.spinner("Obtendo PDF..."):
+                   with st.spinner("Obtendo PDF..."):
 
-                    if diario_escolhido == "Executivo":
-                        pdf_bytes = baixar_pdf_jornal_mg_por_link(url)
+                        if diario_escolhido == "Executivo":
+                            pdf_bytes = baixar_pdf_jornal_mg_por_link(url)
 
-                        if not pdf_bytes:
-                            st.error("Falha ao obter o PDF do Executivo.")
-    
-                    else:
-                        resp = requests.get(url, timeout=30)
-
-                        if resp.status_code == 200:
-                            ctype = resp.headers.get("Content-Type", "")
-                            if ("pdf" not in ctype.lower()) and (not url.lower().endswith(".pdf")):
-                                st.warning("O link não parece apontar para um PDF.")
-
-                            pdf_bytes = resp.content
                         else:
-                            st.error(f"Falha ao baixar (status {resp.status_code}).")
+                            resp = requests.get(url, timeout=30)
+
+                            if resp.status_code == 200:
+                                ctype = resp.headers.get("Content-Type", "")
+                                if ("pdf" not in ctype.lower()) and (not url.lower().endswith(".pdf")):
+                                    st.warning("O link não parece apontar para um PDF (Content-Type != PDF). Tentarei processar mesmo assim.")
+
+                                pdf_bytes = resp.content
+
+                            else:
+                                st.error(f"Falha ao baixar (status {resp.status_code}).")
                         if resp.status_code == 200:
                             ctype = resp.headers.get("Content-Type", "")
                             if ("pdf" not in ctype.lower()) and (not url.lower().endswith(".pdf")):
