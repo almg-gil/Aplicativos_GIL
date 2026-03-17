@@ -734,7 +734,8 @@ class ExecutiveProcessor:
         }
 
         self.norma_regex = re.compile(
-            r'\b(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]\s*([\d\s\.]+),\s*DE\s+([A-Z\s\d]+)\b'
+    r'(?:^|\n|\r|\f)\s*(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]\s*([\d\s\.]+),?\s*DE\s+(.+?)(?:\n|$)',
+    re.DOTALL
         )
         self.comandos_regex = re.compile(
             r'(Ficam\s+revogados|Fica\s+acrescentado|Ficam\s+alterados|passando\s+o\s+item|passa\s+a\s+vigorar|passam\s+a\s+vigorar)',
@@ -787,7 +788,7 @@ class ExecutiveProcessor:
                     largura, altura = pagina.width, pagina.height
                     for col_num, (x0, x1) in enumerate([(0, largura/2), (largura/2, largura)], start=1):
                         coluna = pagina.crop((x0, 0, x1, altura)).extract_text(layout=True) or ""
-                        texto_limpo = re.sub(r'\s+', ' ', coluna).strip()
+                        texto_limpo = coluna.replace('\xa0', ' ')
                         trechos.append({
                             "pagina": i + 1,
                             "coluna": col_num,
@@ -818,14 +819,21 @@ class ExecutiveProcessor:
                     tipo_raw = match.group(1).strip()
                     tipo = self.mapa_tipos.get(tipo_raw.upper(), tipo_raw)
                     numero = match.group(2).replace(" ", "").replace(".", "")
-                    data_texto = match.group(3).strip()
-                    try:
-                        partes = data_texto.split(" DE ")
-                        dia = partes[0].zfill(2)
-                        mes = meses[partes[1].upper()]
-                        ano = partes[2]
-                        sancao = f"{dia}/{mes}/{ano}"
-                    except:
+                    data_texto = (match.group(3) or "").strip()
+
+                    data_match = re.search(
+                        r'(\d{1,2})\s+DE\s+([A-ZÇÃÁÉÍÓÔÚ]+)\s+DE\s+(\d{4})',
+                        data_texto,
+                        re.IGNORECASE
+                    )
+
+                    if data_match:
+                        dia = data_match.group(1).zfill(2)
+                        mes_nome = data_match.group(2).upper()
+                        mes = meses.get(mes_nome, "")
+                        ano = data_match.group(3)
+                        sancao = f"{dia}/{mes}/{ano}" if mes else ""
+                    else:
                         sancao = ""
                     linha = {
                         "Página": pagina,
