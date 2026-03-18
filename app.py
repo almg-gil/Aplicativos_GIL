@@ -248,6 +248,12 @@ class LegislativeProcessor:
             re.IGNORECASE | re.DOTALL
         )
         for match in req_recebimento_pattern.finditer(self.text):
+            trecho_match = match.group(0)
+
+            # Ignora falsos positivos em que o regex atravessou até um parecer
+            if re.search(r"PARECER\s+SOBRE\s+O\s+REQUERIMENTO", trecho_match, re.IGNORECASE):
+                continue
+
             num_part = match.group(1).replace('.', '')
             ano = match.group(2)
             numero_ano = f"{num_part}/{ano}"
