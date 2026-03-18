@@ -379,7 +379,11 @@ class LegislativeProcessor:
         emenda_pattern = re.compile(r"^(?:\s*)EMENDA Nº (\d+)\s*", re.MULTILINE)
         substitutivo_pattern = re.compile(r"^(?:\s*)SUBSTITUTIVO Nº (\d+)\s*", re.MULTILINE)
         project_pattern = re.compile(
-            r"Conclusão\s*([\s\S]*?)(Projeto de Lei|PL|Projeto de Resolução|PRE|Proposta de Emenda à Constituição|PEC|Projeto de Lei Complementar|PLC|Requerimento)\s+(?:nº|Nº)?\s*(\d{1,4}(?:\.\d{1,3})?)\s*/\s*(\d{4})",
+            r"Conclusão\s*([\s\S]*?)"
+            r"(Projeto de Lei|PL|Projeto de Resolução|PRE|Proposta de Emenda à Constituição|PEC|Projeto de Lei Complementar|PLC|Requerimento)\s+"
+            r"(?:n[º°o]|N[º°O])?\s*"
+            r"(\d{1,4}(?:\.\d{1,3})?)\s*/\s*"
+            r"(\d{2,4})",
             re.IGNORECASE | re.DOTALL
         )
 
@@ -408,6 +412,11 @@ class LegislativeProcessor:
                 sigla = SIGLA_MAP_PARECER.get(sigla_raw.lower(), sigla_raw.upper())
                 numero = last_project_match.group(3).replace(".", "")
                 ano = last_project_match.group(4)
+
+                # Normaliza ano com 2 dígitos, ex.: 24 -> 2024
+                if len(ano) == 2:
+                    ano = f"20{ano}"
+
                 project_key = (sigla, numero, ano)
                 item_type = "EMENDA" if "EMENDA" in title_match.group(0).upper() else "SUBSTITUTIVO"
                 if project_key not in found_projects:
