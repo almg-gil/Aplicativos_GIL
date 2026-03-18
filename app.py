@@ -360,6 +360,13 @@ class LegislativeProcessor:
         for match in votacao_pattern.finditer(pareceres_text):
             clean_text = clean_text.replace(match.group(0), "")
 
+        ignore_edital_emenda_pattern = re.compile(
+            r"e votar,\s*no\s*\d+º\s*turno,\s*o\s*Parecer\s*sobre\s*a\s*Emenda\s*n[º°o]?\s*\d+\s*ao\s*Projeto\s*de\s*Lei(?:\s*Complementar)?\s*n[º°o]?\s*\d{1,4}\.?\d{0,3}/\d{4}.*?e\s*de\s*receber,\s*discutir\s*e\s*votar\s*proposições\s*da\s*comissão",
+            re.IGNORECASE | re.DOTALL
+        )
+
+        clean_text = ignore_edital_emenda_pattern.sub("", clean_text)
+
         emenda_projeto_lei_pattern = re.compile(
             r"EMENDAS AO PROJETO DE LEI Nº (\d{1,4}\.?\d{0,3})/(\d{4})",
             re.IGNORECASE | re.DOTALL
