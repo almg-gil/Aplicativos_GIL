@@ -28,6 +28,7 @@ from google.oauth2.service_account import Credentials
 PLANILHA_URL = "https://docs.google.com/spreadsheets/d/1-am5qb_SV853v5omolRM46G8-IQH5ABJKXtoFh_WUvQ"
 ABA_MODELO = "MODELO"
 
+
 @st.cache_resource
 def garantir_playwright_chromium():
     cache_dir = os.path.expanduser("~/.cache/ms-playwright")
@@ -44,6 +45,7 @@ def garantir_playwright_chromium():
             [sys.executable, "-m", "playwright", "install", "chromium"],
             check=True
         )
+
 
 # =========================
 # CONSTANTES E MAPEAMENTOS
@@ -80,9 +82,19 @@ SIGLA_MAP_PARECER = {
 }
 
 meses = {
-    "JANEIRO": "01", "FEVEREIRO": "02", "MARÇO": "03", "MARCO": "03",
-    "ABRIL": "04", "MAIO": "05", "JUNHO": "06", "JULHO": "07",
-    "AGOSTO": "08", "SETEMBRO": "09", "OUTUBRO": "10", "NOVEMBRO": "11", "DEZEMBRO": "12"
+    "JANEIRO": "01",
+    "FEVEREIRO": "02",
+    "MARÇO": "03",
+    "MARCO": "03",
+    "ABRIL": "04",
+    "MAIO": "05",
+    "JUNHO": "06",
+    "JULHO": "07",
+    "AGOSTO": "08",
+    "SETEMBRO": "09",
+    "OUTUBRO": "10",
+    "NOVEMBRO": "11",
+    "DEZEMBRO": "12"
 }
 
 # =========================
@@ -347,6 +359,7 @@ def contar_alteracoes(df: pd.DataFrame) -> int:
         .sum()
     )
 
+
 # =========================
 # DATA / UI OPERACIONAL
 # =========================
@@ -374,6 +387,7 @@ def preparar_datas(data_str):
         "display": dt.strftime("%d/%m/%Y"),
     }
 
+
 # =========================
 # URLS
 # =========================
@@ -390,6 +404,7 @@ def montar_urls(d):
         ),
     }
 
+
 # =========================
 # DOWNLOAD
 # =========================
@@ -397,6 +412,7 @@ def baixar(url):
     r = requests.get(url, timeout=60)
     r.raise_for_status()
     return r.content
+
 
 # =========================
 # UTILITÁRIOS EXTRATOR
@@ -414,6 +430,7 @@ def classify_req(segment: str) -> str:
     if "r seja formulada manifestação de apoio" in segment_lower:
         return "Manifestação de apoio"
     return ""
+
 
 # =========================
 # EXECUTIVO - DOWNLOAD PDF
@@ -501,6 +518,7 @@ def baixar_pdf_jornal_mg_por_link(url_pagina: str) -> bytes:
             time.sleep(2 * (tentativa + 1))
 
     raise Exception(f"Erro ao obter PDF do Executivo após 3 tentativas: {ultimo_erro}")
+
 
 # =========================
 # PREENCHIMENTO DO MODELO
@@ -786,6 +804,7 @@ def preencher_aba_modelo(
     if total_5:
         escrever_celula(ws, f"C{total_5}", 0)
 
+
 # =========================
 # CLASS LegislativeProcessor
 # =========================
@@ -832,9 +851,19 @@ class LegislativeProcessor:
         )
 
         meses_leg = {
-            "JANEIRO": "01", "FEVEREIRO": "02", "MARÇO": "03", "MARCO": "03",
-            "ABRIL": "04", "MAIO": "05", "JUNHO": "06", "JULHO": "07",
-            "AGOSTO": "08", "SETEMBRO": "09", "OUTUBRO": "10", "NOVEMBRO": "11", "DEZEMBRO": "12"
+            "JANEIRO": "01",
+            "FEVEREIRO": "02",
+            "MARÇO": "03",
+            "MARCO": "03",
+            "ABRIL": "04",
+            "MAIO": "05",
+            "JUNHO": "06",
+            "JULHO": "07",
+            "AGOSTO": "08",
+            "SETEMBRO": "09",
+            "OUTUBRO": "10",
+            "NOVEMBRO": "11",
+            "DEZEMBRO": "12"
         }
 
         normas = []
@@ -885,6 +914,7 @@ class LegislativeProcessor:
                 continue
             if ignore_redacao_final.search(contexto_antes) or ignore_publicada_antes.search(contexto_depois):
                 continue
+
             subseq_text = self.text[end_idx:end_idx + 250]
             if "(Redação do Vencido)" in subseq_text:
                 continue
@@ -1029,6 +1059,7 @@ class LegislativeProcessor:
                 nums_in_block = re.findall(r"\d{2}\.?\d{3}/\d{4}", block)
                 if not nums_in_block:
                     continue
+
                 num_part, ano = nums_in_block[0].replace(".", "").split("/")
                 numero_ano = f"{num_part}/{ano}"
                 if numero_ano not in reqs_to_ignore:
@@ -1180,6 +1211,7 @@ class LegislativeProcessor:
             "Pareceres": df_pareceres
         }
 
+
 # =========================
 # CLASS AdministrativeProcessor
 # =========================
@@ -1188,9 +1220,19 @@ class AdministrativeProcessor:
         self.pdf_bytes = pdf_bytes
 
         self.meses = {
-            "janeiro": "01", "fevereiro": "02", "março": "03", "marco": "03",
-            "abril": "04", "maio": "05", "junho": "06", "julho": "07",
-            "agosto": "08", "setembro": "09", "outubro": "10", "novembro": "11", "dezembro": "12"
+            "janeiro": "01",
+            "fevereiro": "02",
+            "março": "03",
+            "marco": "03",
+            "abril": "04",
+            "maio": "05",
+            "junho": "06",
+            "julho": "07",
+            "agosto": "08",
+            "setembro": "09",
+            "outubro": "10",
+            "novembro": "11",
+            "dezembro": "12"
         }
 
         self.norma_publicada_regex = re.compile(
@@ -1444,6 +1486,7 @@ class AdministrativeProcessor:
             columns=["Página", "Coluna", "Sanção", "Sigla", "Número", "Ano", "Alterações"]
         )
 
+
 # =========================
 # CLASS ExecutiveProcessor
 # =========================
@@ -1640,17 +1683,21 @@ class ExecutiveProcessor:
 
         return pd.DataFrame(dados) if dados else pd.DataFrame()
 
+
 # =========================
 # FUNÇÕES PARA GERADOR DE LINKS
 # =========================
 def dia_anterior():
     st.session_state.data -= timedelta(days=1)
 
+
 def dia_posterior():
     st.session_state.data += timedelta(days=1)
 
+
 def ir_hoje():
     st.session_state.data = datetime.today().date()
+
 
 # =========================
 # FUNÇÕES PARA CHATBOT
@@ -1777,6 +1824,7 @@ Pergunta: {pergunta_usuario}
 """,
 }
 
+
 def carregar_documento_do_disco(caminho_arquivo):
     if not os.path.exists(caminho_arquivo):
         st.error(f"Erro: O arquivo '{caminho_arquivo}' não foi encontrado.")
@@ -1834,6 +1882,7 @@ def answer_from_document(prompt_completo, api_key):
         return f"Erro na comunicação com a API: {http_err}"
     except Exception as e:
         return f"Ocorreu um erro: {e}"
+
 
 # =========================
 # FUNÇÕES PARA GERADOR DE TERMOS E RESUMOS
@@ -2044,6 +2093,7 @@ def gerar_termos_llm(texto_original, termos_dicionario, num_termos):
 
     return []
 
+
 # =========================
 # FUNÇÕES PARA CONVERSOR DE PDF EM TEXTO (OCR)
 # =========================
@@ -2056,6 +2106,7 @@ def correct_ocr_text(raw_text):
     if not api_key:
         st.error("Chave de API do Gemini não encontrada. Verifique as variáveis de ambiente ou secrets.")
         return raw_text
+
     apiUrl = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
     system_prompt = """
 Você é um corretor ortográfico e normalizador de texto brasileiro, especializado em documentos históricos.
@@ -2079,6 +2130,7 @@ Regras estritas:
         "contents": [{"parts": [{"text": raw_text}]}],
         "system_instruction": {"parts": [{"text": system_prompt}]},
     }
+
     try:
         response = requests.post(
             apiUrl,
@@ -2097,6 +2149,7 @@ Regras estritas:
     except Exception as e:
         st.error(f"Ocorreu um erro inesperado durante a correção via Gemini: {e}. Exibindo texto bruto.")
     return raw_text
+
 
 # =========================
 # FUNÇÃO PRINCIPAL DA APLICAÇÃO
@@ -2215,22 +2268,22 @@ def run_app():
             else:
                 st.caption(f"🟥 {data} — ainda não criada")
 
-            if st.button("Processar", disabled=not pode_processar, use_container_width=True):
-                try:
-                    d = preparar_datas(data)
-                except ValueError:
-                    st.error("Data inválida. Use o formato DD/MM/AAAA.")
-                    st.stop()
+        if st.button("Processar", disabled=not pode_processar, use_container_width=True):
+            try:
+                d = preparar_datas(data)
+            except ValueError:
+                st.error("Data inválida. Use o formato DD/MM/AAAA.")
+                st.stop()
 
-                urls = montar_urls(d)
-                st.write("🔎 Processando...")
+            urls = montar_urls(d)
+            st.write("🔎 Processando...")
 
-                df_exec = pd.DataFrame()
-                df_adm = pd.DataFrame()
-                df_leg_normas = pd.DataFrame()
-                df_props = pd.DataFrame()
-                df_reqs = pd.DataFrame()
-                df_pareceres = pd.DataFrame()
+            df_exec = pd.DataFrame()
+            df_adm = pd.DataFrame()
+            df_leg_normas = pd.DataFrame()
+            df_props = pd.DataFrame()
+            df_reqs = pd.DataFrame()
+            df_pareceres = pd.DataFrame()
 
             # ================= EXECUTIVO =================
             try:
@@ -2335,6 +2388,7 @@ def run_app():
 
             except Exception as e:
                 st.error(f"Erro Google Sheets: {e}")
+
     # =========================================================
     # GERADOR DE LINKS
     # =========================================================
