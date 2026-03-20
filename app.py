@@ -1,4 +1,7 @@
 # -*- coding: utf-8 -*-
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+import sys
+import time
 import streamlit as st
 import re
 import pandas as pd
@@ -24,6 +27,23 @@ from google.oauth2.service_account import Credentials
 # =========================
 PLANILHA_URL = "https://docs.google.com/spreadsheets/d/1-am5qb_SV853v5omolRM46G8-IQH5ABJKXtoFh_WUvQ"
 ABA_MODELO = "MODELO"
+
+@st.cache_resource
+def garantir_playwright_chromium():
+    cache_dir = os.path.expanduser("~/.cache/ms-playwright")
+    chromium_ok = False
+
+    if os.path.isdir(cache_dir):
+        try:
+            chromium_ok = any("chromium" in nome.lower() for nome in os.listdir(cache_dir))
+        except Exception:
+            chromium_ok = False
+
+    if not chromium_ok:
+        subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium"],
+            check=True
+        )
 
 # =========================
 # CONSTANTES E MAPEAMENTOS
@@ -399,39 +419,88 @@ def classify_req(segment: str) -> str:
 # EXECUTIVO - DOWNLOAD PDF
 # =========================
 def baixar_pdf_jornal_mg_por_link(url_pagina: str) -> bytes:
-    try:
-        match = re.search(r'dados=([^&]+)', url_pagina)
-        if not match:
-            raise Exception("Parâmetro dados não encontrado")
+    ultimo_erro = None
 
-        dados_codificados = match.group(1)
-        json_str = requests.utils.unquote(dados_codificados)
-        dados = json.loads(json_str)
+    for tentativa in range(3):
+        try:
+            match = re.search(r'dados=([^&]+)', url_pagina)
+            if not match:
+                raise Exception("Parâmetro dados não encontrado")
 
-        data_iso = dados["dataPublicacaoSelecionada"]
-        data = data_iso.split("T")[0]
+            dados_codificados = match.group(1)
+            json_str = requests.utils.unquote(dados_codificados)
+            dados = json.loads(json_str)
 
-        api_url = (
-            "https://www.jornalminasgerais.mg.gov.br/api/v1/Jornal/"
-            f"ObterEdicaoPorDataPublicacao?dataPublicacao={data}"
-        )
+            data_iso = dados["dataPublicacaoSelecionada"]
+            data = data_iso.split("T")[0]
 
-        headers = {
-            "User-Agent": "Mozilla/5.0",
-            "Referer": "https://www.jornalminasgerais.mg.gov.br/"
-        }
+            api_url = (
+                "https://www.jornalminasgerais.mg.gov.br/api/v1/Jornal/"
+                f"ObterEdicaoPorDataPublicacao?dataPublicacao={data}"
+            )
 
-        r = requests.get(api_url, headers=headers, timeout=60)
-        r.raise_for_status()
+            with sync_playwright() as p:
+                browser = p.chromium.launch(
+                    headless=True,
+                    args=[
+                        "--no-sandbox",
+                        "--disable-dev-shm-usage"
+                    ]
+                )
 
-        dados_api = r.json()
-        base64_pdf = dados_api["dados"]["arquivoCadernoPrincipal"]["arquivo"]
-        pdf_bytes = base64.b64decode(base64_pdf)
+                context = browser.new_context(
+                    user_agent=(
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/122.0.0.0 Safari/537.36"
+                    ),
+                    locale="pt-BR"
+                )
 
-        return pdf_bytes
+                page = context.new_page()
+                page.goto(url_pagina, wait_until="domcontentloaded", timeout=60000)
+                page.wait_for_timeout(2500)
 
-    except Exception as e:
-        raise Exception(f"Erro ao obter PDF do Executivo: {e}")
+                resultado = page.evaluate(
+                    """
+                    async ({ apiUrl }) => {
+                        const resp = await fetch(apiUrl, {
+                            method: "GET",
+                            credentials: "include",
+                            headers: {
+                                "accept": "application/json, text/plain, */*"
+                            }
+                        });
+
+                        const text = await resp.text();
+                        return {
+                            status: resp.status,
+                            text
+                        };
+                    }
+                    """,
+                    {"apiUrl": api_url}
+                )
+
+                browser.close()
+
+            status = resultado["status"]
+            if status != 200:
+                raise Exception(f"API do Executivo retornou HTTP {status}")
+
+            dados_api = json.loads(resultado["text"])
+            base64_pdf = dados_api["dados"]["arquivoCadernoPrincipal"]["arquivo"]
+            return base64.b64decode(base64_pdf)
+
+        except PlaywrightTimeoutError as e:
+            ultimo_erro = f"Timeout no Playwright: {e}"
+        except Exception as e:
+            ultimo_erro = e
+
+        if tentativa < 2:
+            time.sleep(2 * (tentativa + 1))
+
+    raise Exception(f"Erro ao obter PDF do Executivo após 3 tentativas: {ultimo_erro}")
 
 # =========================
 # PREENCHIMENTO DO MODELO
@@ -2164,22 +2233,24 @@ def run_app():
             df_pareceres = pd.DataFrame()
 
             # ================= EXECUTIVO =================
-            try:
-                pdf_exec = baixar_pdf_jornal_mg_por_link(urls["executivo_html"])
-                exec_proc = ExecutiveProcessor(pdf_exec)
-                df_exec = exec_proc.process_pdf()
+            # ================= EXECUTIVO =================
+try:
+    garantir_playwright_chromium()
+    pdf_exec = baixar_pdf_jornal_mg_por_link(urls["executivo_html"])
+    exec_proc = ExecutiveProcessor(pdf_exec)
+    df_exec = exec_proc.process_pdf()
 
-                if not df_exec.empty:
-                    df_exec = df_exec.copy()
-                    if "Sanção" in df_exec.columns:
-                        df_exec["Ano"] = df_exec["Sanção"].fillna("").astype(str).str[-4:]
-                    else:
-                        df_exec["Ano"] = ""
+    if not df_exec.empty:
+        df_exec = df_exec.copy()
+        if "Sanção" in df_exec.columns:
+            df_exec["Ano"] = df_exec["Sanção"].fillna("").astype(str).str[-4:]
+        else:
+            df_exec["Ano"] = ""
 
-                st.success(f"Executivo OK ({len(df_exec)} registros)")
-            except Exception as e:
-                st.error(f"Erro Executivo: {e}")
-                df_exec = pd.DataFrame()
+    st.success(f"Executivo OK ({len(df_exec)} registros)")
+except Exception as e:
+    st.error(f"Erro Executivo: {e}")
+    df_exec = pd.DataFrame()
 
             # ================= LEGISLATIVO =================
             try:
