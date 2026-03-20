@@ -2241,7 +2241,7 @@ def run_app():
             df_exec = exec_proc.process_pdf()
 
             if not df_exec.empty:
-            df_exec = df_exec.copy()
+                df_exec = df_exec.copy()
             if "Sanção" in df_exec.columns:
                 df_exec["Ano"] = df_exec["Sanção"].fillna("").astype(str).str[-4:]
             else:
