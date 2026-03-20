@@ -2216,11 +2216,11 @@ def run_app():
                 st.caption(f"🟥 {data} — ainda não criada")
 
                 if st.button("Processar", disabled=not pode_processar, use_container_width=True):
-            try:
-                d = preparar_datas(data)
-            except ValueError:
-                st.error("Data inválida. Use o formato DD/MM/AAAA.")
-                st.stop()
+                    try:
+                        d = preparar_datas(data)
+                        except ValueError:
+                        st.error("Data inválida. Use o formato DD/MM/AAAA.")
+                        st.stop()
 
             urls = montar_urls(d)
             st.write("🔎 Processando...")
