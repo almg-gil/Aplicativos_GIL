@@ -2215,22 +2215,22 @@ def run_app():
             else:
                 st.caption(f"🟥 {data} — ainda não criada")
 
-                        if st.button("Processar", disabled=not pode_processar, use_container_width=True):
-            try:
-                d = preparar_datas(data)
-            except ValueError:
-                st.error("Data inválida. Use o formato DD/MM/AAAA.")
-                st.stop()
+            if st.button("Processar", disabled=not pode_processar, use_container_width=True):
+                try:
+                    d = preparar_datas(data)
+                except ValueError:
+                    st.error("Data inválida. Use o formato DD/MM/AAAA.")
+                    st.stop()
 
-            urls = montar_urls(d)
-            st.write("🔎 Processando...")
+                urls = montar_urls(d)
+                st.write("🔎 Processando...")
 
-            df_exec = pd.DataFrame()
-            df_adm = pd.DataFrame()
-            df_leg_normas = pd.DataFrame()
-            df_props = pd.DataFrame()
-            df_reqs = pd.DataFrame()
-            df_pareceres = pd.DataFrame()
+                df_exec = pd.DataFrame()
+                df_adm = pd.DataFrame()
+                df_leg_normas = pd.DataFrame()
+                df_props = pd.DataFrame()
+                df_reqs = pd.DataFrame()
+                df_pareceres = pd.DataFrame()
 
             # ================= EXECUTIVO =================
             try:
