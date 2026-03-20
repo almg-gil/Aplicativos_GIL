@@ -22,7 +22,7 @@ from google.oauth2.service_account import Credentials
 # =========================
 # CONFIG GOOGLE SHEETS
 # =========================
-PLANILHA_URL = "https://docs.google.com/spreadsheets/d/1XQ8VMo_O5i8KLQWmb_s4xrBuisUQUgdmgQw5xoCu-ms"
+PLANILHA_URL = "https://docs.google.com/spreadsheets/d/1-am5qb_SV853v5omolRM46G8-IQH5ABJKXtoFh_WUvQ"
 ABA_MODELO = "MODELO"
 
 # =========================
