@@ -16,8 +16,18 @@ import docx
 import subprocess
 import tempfile
 import shutil
+import gspread
+from google.oauth2.service_account import Credentials
 
-# --- Constantes e Mapeamentos para Extrator de Diários Oficiais ---
+# =========================
+# CONFIG GOOGLE SHEETS
+# =========================
+PLANILHA_URL = "https://docs.google.com/spreadsheets/d/1XQ8VMo_O5i8KLQWmb_s4xrBuisUQUgdmgQw5xoCu-ms"
+ABA_MODELO = "MODELO"
+
+# =========================
+# CONSTANTES E MAPEAMENTOS
+# =========================
 TIPO_MAP_NORMA = {
     "LEI": "LEI",
     "RESOLUÇÃO": "RAL",
@@ -55,7 +65,322 @@ meses = {
     "AGOSTO": "08", "SETEMBRO": "09", "OUTUBRO": "10", "NOVEMBRO": "11", "DEZEMBRO": "12"
 }
 
-# --- Funções Utilitárias para Extrator de Diários Oficiais ---
+# =========================
+# GOOGLE SHEETS
+# =========================
+def conectar_gsheet():
+    creds_dict = st.secrets["gcp_service_account"]
+
+    creds = Credentials.from_service_account_info(
+        creds_dict,
+        scopes=[
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+    )
+
+    client = gspread.authorize(creds)
+    return client.open_by_url(PLANILHA_URL)
+
+
+def nome_aba_data(data_str: str) -> str:
+    return datetime.strptime(data_str, "%d/%m/%Y").strftime("%d/%m")
+
+
+def listar_nomes_abas(spreadsheet) -> set:
+    return {ws.title.strip() for ws in spreadsheet.worksheets()}
+
+
+def aba_existe(spreadsheet, data_str: str) -> tuple[bool, str]:
+    nome_aba = nome_aba_data(data_str)
+    nome_aba_alt = nome_aba.replace("/", "-")
+
+    nomes = listar_nomes_abas(spreadsheet)
+
+    if nome_aba in nomes:
+        return True, nome_aba
+    if nome_aba_alt in nomes:
+        return True, nome_aba_alt
+
+    return False, nome_aba
+
+
+def obter_ou_criar_aba_data(spreadsheet, data_str: str, nome_modelo: str = ABA_MODELO):
+    existe, nome_encontrado = aba_existe(spreadsheet, data_str)
+    if existe:
+        raise ValueError(
+            f"A aba '{nome_encontrado}' já existe. Operação bloqueada para evitar sobrescrita."
+        )
+
+    nome_aba = nome_aba_data(data_str)
+    modelo = spreadsheet.worksheet(nome_modelo)
+
+    try:
+        spreadsheet.duplicate_sheet(
+            source_sheet_id=modelo.id,
+            new_sheet_name=nome_aba
+        )
+        return spreadsheet.worksheet(nome_aba)
+    except Exception:
+        nome_aba_alt = nome_aba.replace("/", "-")
+        spreadsheet.duplicate_sheet(
+            source_sheet_id=modelo.id,
+            new_sheet_name=nome_aba_alt
+        )
+        return spreadsheet.worksheet(nome_aba_alt)
+
+
+def encontrar_linha(ws, texto: str, ocorrencia: int = 1):
+    valores = ws.col_values(1)
+    alvo = texto.strip().upper()
+    cont = 0
+
+    for idx, valor in enumerate(valores, start=1):
+        if str(valor).strip().upper() == alvo:
+            cont += 1
+            if cont == ocorrencia:
+                return idx
+    raise ValueError(f"Marcador '{texto}' (ocorrência {ocorrencia}) não encontrado na aba.")
+
+
+def encontrar_linha_safe(ws, texto: str, ocorrencia: int = 1):
+    try:
+        return encontrar_linha(ws, texto, ocorrencia)
+    except Exception:
+        return None
+
+
+def num_to_col(n: int) -> str:
+    resultado = ""
+    while n > 0:
+        n, resto = divmod(n - 1, 26)
+        resultado = chr(65 + resto) + resultado
+    return resultado
+
+
+def escrever_bloco(ws, linha_inicial: int, linhas: list[list], mesclar_coluna_a: bool = True):
+    if not linhas:
+        return
+
+    ncols = max(len(l) for l in linhas)
+    linhas = [l + [""] * (ncols - len(l)) for l in linhas]
+
+    formulas_para_reaplicar = []
+    for i, linha in enumerate(linhas, start=linha_inicial):
+        for j, valor in enumerate(linha, start=1):
+            if isinstance(valor, str) and valor.startswith("="):
+                formulas_para_reaplicar.append({
+                    "range": f"{num_to_col(j)}{i}",
+                    "values": [[valor]]
+                })
+
+    extras = len(linhas) - 1
+    if extras > 0:
+        ws.insert_rows(
+            [[""] * ncols for _ in range(extras)],
+            row=linha_inicial + 1,
+            value_input_option="USER_ENTERED",
+            inherit_from_before=True
+        )
+
+    col_fim = num_to_col(ncols)
+    linha_fim = linha_inicial + len(linhas) - 1
+    faixa = f"A{linha_inicial}:{col_fim}{linha_fim}"
+
+    ws.update(
+        faixa,
+        linhas,
+        value_input_option="USER_ENTERED"
+    )
+
+    ws.format(
+        faixa,
+        {
+            "backgroundColor": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+                "fontFamily": "Inconsolata",
+                "fontSize": 10,
+                "bold": True
+            }
+        }
+    )
+
+    if mesclar_coluna_a and len(linhas) > 1:
+        faixa_merge = f"A{linha_inicial}:A{linha_fim}"
+
+        try:
+            ws.unmerge_cells(faixa_merge)
+        except Exception:
+            pass
+
+        ws.merge_cells(faixa_merge)
+
+        ws.format(
+            faixa_merge,
+            {
+                "horizontalAlignment": "CENTER",
+                "verticalAlignment": "MIDDLE",
+                "textFormat": {
+                    "fontFamily": "Inconsolata",
+                    "fontSize": 10,
+                    "bold": True
+                }
+            }
+        )
+
+    if formulas_para_reaplicar:
+        ws.batch_update(
+            formulas_para_reaplicar,
+            value_input_option="USER_ENTERED"
+        )
+
+
+def mesclar_linhas_intervalo(ws, linha_inicial: int, qtd_linhas: int, col_inicial: int, col_final: int):
+    if qtd_linhas <= 0:
+        return
+
+    start_row = linha_inicial - 1
+    end_row = linha_inicial + qtd_linhas - 1
+    start_col = col_inicial - 1
+    end_col = col_final
+
+    faixa_total = {
+        "sheetId": ws.id,
+        "startRowIndex": start_row,
+        "endRowIndex": end_row,
+        "startColumnIndex": start_col,
+        "endColumnIndex": end_col
+    }
+
+    try:
+        ws.spreadsheet.batch_update({
+            "requests": [
+                {
+                    "unmergeCells": {
+                        "range": faixa_total
+                    }
+                }
+            ]
+        })
+    except Exception:
+        pass
+
+    requests_batch = []
+
+    for linha in range(linha_inicial, linha_inicial + qtd_linhas):
+        faixa_linha = {
+            "sheetId": ws.id,
+            "startRowIndex": linha - 1,
+            "endRowIndex": linha,
+            "startColumnIndex": start_col,
+            "endColumnIndex": end_col
+        }
+
+        requests_batch.append({
+            "mergeCells": {
+                "range": faixa_linha,
+                "mergeType": "MERGE_ALL"
+            }
+        })
+
+        requests_batch.append({
+            "repeatCell": {
+                "range": faixa_linha,
+                "cell": {
+                    "userEnteredFormat": {
+                        "horizontalAlignment": "LEFT",
+                        "verticalAlignment": "MIDDLE",
+                        "textFormat": {
+                            "fontFamily": "Inconsolata",
+                            "fontSize": 10,
+                            "bold": True
+                        }
+                    }
+                },
+                "fields": "userEnteredFormat(horizontalAlignment,verticalAlignment,textFormat)"
+            }
+        })
+
+    if requests_batch:
+        ws.spreadsheet.batch_update({"requests": requests_batch})
+
+
+def escrever_celula(ws, celula: str, valor):
+    ws.update(celula, [[valor]], value_input_option="USER_ENTERED")
+
+
+def contar_alteracoes(df: pd.DataFrame) -> int:
+    if df is None or df.empty or "Alterações" not in df.columns:
+        return 0
+    return int(
+        df["Alterações"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .ne("")
+        .sum()
+    )
+
+# =========================
+# DATA / UI OPERACIONAL
+# =========================
+def ajustar_data_operacional(dt: date) -> date:
+    # weekday(): segunda=0 ... domingo=6
+    if dt.weekday() == 0:  # segunda-feira
+        return dt - timedelta(days=2)  # sábado anterior
+    if dt.weekday() == 6:  # domingo
+        return dt - timedelta(days=1)  # sábado anterior
+    return dt
+
+
+def data_padrao_operacional() -> date:
+    return ajustar_data_operacional(date.today())
+
+
+def preparar_datas(data_str):
+    dt = datetime.strptime(data_str, "%d/%m/%Y")
+    return {
+        "yyyy": dt.strftime("%Y"),
+        "mm": dt.strftime("%m"),
+        "dd": dt.strftime("%d"),
+        "yyyymmdd": dt.strftime("%Y%m%d"),
+        "iso_exec": dt.strftime("%Y-%m-%dT06:00:00.000Z"),
+        "display": dt.strftime("%d/%m/%Y"),
+    }
+
+# =========================
+# URLS
+# =========================
+def montar_urls(d):
+    return {
+        "executivo_html": (
+            "https://www.jornalminasgerais.mg.gov.br/edicao-do-dia"
+            f"?dados=%7B%22dataPublicacaoSelecionada%22:%22{d['iso_exec']}%22%7D"
+        ),
+        "legislativo": f"https://diariolegislativo.almg.gov.br/{d['yyyy']}/L{d['yyyymmdd']}.pdf",
+        "administrativo": (
+            "https://intra.almg.gov.br/export/sites/default/acontece/"
+            f"diario-administrativo/arquivos/{d['yyyy']}/{d['mm']}/L{d['yyyymmdd']}.pdf"
+        ),
+    }
+
+# =========================
+# DOWNLOAD
+# =========================
+def baixar(url):
+    r = requests.get(url, timeout=60)
+    r.raise_for_status()
+    return r.content
+
+# =========================
+# UTILITÁRIOS EXTRATOR
+# =========================
 def classify_req(segment: str) -> str:
     segment_lower = segment.lower()
     if "seja formulado voto de congratulações" in segment_lower:
@@ -70,28 +395,348 @@ def classify_req(segment: str) -> str:
         return "Manifestação de apoio"
     return ""
 
-# --- Classes de Processamento para Extrator de Diários Oficiais ---
+# =========================
+# EXECUTIVO - DOWNLOAD PDF
+# =========================
+def baixar_pdf_jornal_mg_por_link(url_pagina: str) -> bytes:
+    try:
+        match = re.search(r'dados=([^&]+)', url_pagina)
+        if not match:
+            raise Exception("Parâmetro dados não encontrado")
+
+        dados_codificados = match.group(1)
+        json_str = requests.utils.unquote(dados_codificados)
+        dados = json.loads(json_str)
+
+        data_iso = dados["dataPublicacaoSelecionada"]
+        data = data_iso.split("T")[0]
+
+        api_url = (
+            "https://www.jornalminasgerais.mg.gov.br/api/v1/Jornal/"
+            f"ObterEdicaoPorDataPublicacao?dataPublicacao={data}"
+        )
+
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://www.jornalminasgerais.mg.gov.br/"
+        }
+
+        r = requests.get(api_url, headers=headers, timeout=60)
+        r.raise_for_status()
+
+        dados_api = r.json()
+        base64_pdf = dados_api["dados"]["arquivoCadernoPrincipal"]["arquivo"]
+        pdf_bytes = base64.b64decode(base64_pdf)
+
+        return pdf_bytes
+
+    except Exception as e:
+        raise Exception(f"Erro ao obter PDF do Executivo: {e}")
+
+# =========================
+# PREENCHIMENTO DO MODELO
+# =========================
+def montar_link_data(texto_data: str, url: str) -> str:
+    if not url:
+        return texto_data
+
+    texto_data = str(texto_data).replace('"', '""')
+    url = str(url).replace('"', '""')
+
+    return f'=HIPERLINK("{url}";"{texto_data}")'
+
+
+def montar_link_numero_norma(tipo: str, numero, sancao: str) -> str:
+    numero_txt = str(numero).strip()
+    tipo_txt = str(tipo).strip().upper()
+    sancao_txt = str(sancao).strip()
+
+    if not numero_txt or not tipo_txt:
+        return numero_txt
+
+    ano = ""
+    m = re.search(r"(\d{4})$", sancao_txt)
+    if m:
+        ano = m.group(1)
+
+    if not ano:
+        return numero_txt
+
+    url = f"https://www.almg.gov.br/legislacao-mineira/{tipo_txt}/{numero_txt}/{ano}/"
+    numero_txt_esc = numero_txt.replace('"', '""')
+    url_esc = url.replace('"', '""')
+
+    return f'=HIPERLINK("{url_esc}";"{numero_txt_esc}")'
+
+
+def montar_link_alteracao_norma(alteracao) -> str:
+    texto = str(alteracao).strip()
+
+    if not texto:
+        return ""
+
+    partes = texto.split()
+
+    if len(partes) < 3:
+        return texto
+
+    tipo_txt = partes[0].strip().upper()
+    numero_txt = partes[1].strip()
+    ano_txt = partes[2].strip()
+
+    if not tipo_txt or not numero_txt or not ano_txt:
+        return texto
+
+    url = f"https://www.almg.gov.br/legislacao-mineira/{tipo_txt}/{numero_txt}/{ano_txt}/"
+
+    texto_esc = texto.replace('"', '""')
+    url_esc = url.replace('"', '""')
+
+    return f'=HIPERLINK("{url_esc}";"{texto_esc}")'
+
+
+def montar_link_numero_proposicao(tipo: str, numero, ano) -> str:
+    numero_txt = str(numero).strip()
+    tipo_txt = str(tipo).strip().upper()
+    ano_txt = str(ano).strip()
+
+    if not numero_txt or not tipo_txt or not ano_txt:
+        return numero_txt
+
+    url = f"https://www.almg.gov.br/projetos-de-lei/{tipo_txt}/{numero_txt}/{ano_txt}/"
+    numero_txt_esc = numero_txt.replace('"', '""')
+    url_esc = url.replace('"', '""')
+
+    return f'=HIPERLINK("{url_esc}";"{numero_txt_esc}")'
+
+
+def montar_linhas_normas(data_str: str, df: pd.DataFrame, url_diario: str = "") -> list[list]:
+    link_data = montar_link_data(data_str, url_diario)
+
+    if df is None or df.empty:
+        return [[link_data, "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]]
+
+    df = df.fillna("")
+    linhas = []
+
+    for i, (_, r) in enumerate(df.iterrows()):
+        numero_link = montar_link_numero_norma(
+            tipo=r.get("Tipo", ""),
+            numero=r.get("Número", ""),
+            sancao=r.get("Sanção", "")
+        )
+
+        alteracao_link = montar_link_alteracao_norma(
+            r.get("Alterações", "")
+        )
+
+        linhas.append([
+            link_data if i == 0 else "",
+            r.get("Página", ""),
+            r.get("Coluna", ""),
+            r.get("Sanção", ""),
+            r.get("Tipo", ""),
+            numero_link,
+            "",
+            "",
+            "",
+            alteracao_link,
+            "",
+            "",
+            "",
+            "",
+            "",
+            ""
+        ])
+    return linhas
+
+
+def montar_linhas_proposicoes(data_str: str, df: pd.DataFrame, url_diario: str = "") -> list[list]:
+    link_data = montar_link_data(data_str, url_diario)
+
+    if df is None or df.empty:
+        return [[link_data, "", "", "", "", "", ""]]
+
+    df = df.fillna("")
+    linhas = []
+    for i, (_, r) in enumerate(df.iterrows()):
+        numero_link = montar_link_numero_proposicao(
+            tipo=r.get("Tipo", ""),
+            numero=r.get("Número", ""),
+            ano=r.get("Ano", "")
+        )
+
+        linhas.append([
+            link_data if i == 0 else "",
+            r.get("Tipo", ""),
+            numero_link,
+            r.get("Ano", ""),
+            "",
+            "",
+            r.get("Observação", r.get("Categoria", ""))
+        ])
+    return linhas
+
+
+def montar_linhas_requerimentos(data_str: str, df: pd.DataFrame, url_diario: str = "") -> list[list]:
+    link_data = montar_link_data(data_str, url_diario)
+
+    if df is None or df.empty:
+        return [[link_data, "", "", "", "", "", ""]]
+
+    df = df.fillna("")
+    linhas = []
+    for i, (_, r) in enumerate(df.iterrows()):
+        numero_link = montar_link_numero_proposicao(
+            tipo=r.get("Tipo", ""),
+            numero=r.get("Número", ""),
+            ano=r.get("Ano", "")
+        )
+
+        linhas.append([
+            link_data if i == 0 else "",
+            r.get("Tipo", ""),
+            numero_link,
+            r.get("Ano", ""),
+            "",
+            "",
+            r.get("Observação", r.get("Classificação", ""))
+        ])
+    return linhas
+
+
+def montar_linhas_pareceres(data_str: str, df: pd.DataFrame, url_diario: str = "") -> list[list]:
+    link_data = montar_link_data(data_str, url_diario)
+
+    if df is None or df.empty:
+        return [[link_data, "", "", "", "", "", "", ""]]
+
+    df = df.fillna("")
+    linhas = []
+    for i, (_, r) in enumerate(df.iterrows()):
+        numero_link = montar_link_numero_proposicao(
+            tipo=r.get("Tipo", ""),
+            numero=r.get("Número", ""),
+            ano=r.get("Ano", "")
+        )
+
+        linhas.append([
+            link_data if i == 0 else "",
+            r.get("Tipo", ""),
+            numero_link,
+            r.get("Ano", ""),
+            r.get("Subtipo", ""),
+            "",
+            "",
+            r.get("Observação", "")
+        ])
+    return linhas
+
+
+def preencher_aba_modelo(
+    ws,
+    data_str: str,
+    urls: dict,
+    df_exec: pd.DataFrame,
+    df_adm: pd.DataFrame,
+    df_leg_normas: pd.DataFrame,
+    df_props: pd.DataFrame,
+    df_reqs: pd.DataFrame,
+    df_pareceres: pd.DataFrame
+):
+    linha_pareceres = encontrar_linha(ws, "PARECERES", 1) + 1
+    linhas_pareceres = montar_linhas_pareceres(data_str, df_pareceres, urls["legislativo"])
+    escrever_bloco(ws, linha_pareceres, linhas_pareceres)
+    mesclar_linhas_intervalo(ws, linha_pareceres, len(linhas_pareceres), 8, 15)
+
+    linha_reqs = encontrar_linha(ws, "REQUERIMENTOS", 1) + 1
+    linhas_reqs = montar_linhas_requerimentos(data_str, df_reqs, urls["legislativo"])
+    escrever_bloco(ws, linha_reqs, linhas_reqs)
+    mesclar_linhas_intervalo(ws, linha_reqs, len(linhas_reqs), 7, 15)
+
+    linha_props = encontrar_linha(ws, "PROPOSIÇÕES", 1) + 1
+    linhas_props = montar_linhas_proposicoes(data_str, df_props, urls["legislativo"])
+    escrever_bloco(ws, linha_props, linhas_props)
+    mesclar_linhas_intervalo(ws, linha_props, len(linhas_props), 7, 15)
+
+    linha_leg = encontrar_linha(ws, "DIÁRIO DO LEGISLATIVO", 1) + 1
+    escrever_bloco(
+        ws,
+        linha_leg,
+        montar_linhas_normas(data_str, df_leg_normas, urls["legislativo"])
+    )
+
+    linha_adm = encontrar_linha(ws, "DIÁRIO ADMINISTRATIVO", 1) + 1
+    escrever_bloco(
+        ws,
+        linha_adm,
+        montar_linhas_normas(data_str, df_adm, urls["administrativo"])
+    )
+
+    linha_dj = encontrar_linha(ws, "DIÁRIO DA JUSTIÇA", 1) + 1
+    escrever_bloco(
+        ws,
+        linha_dj,
+        montar_linhas_normas(data_str, pd.DataFrame(), "")
+    )
+
+    linha_exec = encontrar_linha(ws, "DIÁRIO DO EXECUTIVO", 1) + 1
+    escrever_bloco(
+        ws,
+        linha_exec,
+        montar_linhas_normas(data_str, df_exec, urls["executivo_html"])
+    )
+
+    total_1 = encontrar_linha_safe(ws, "TOTAL", 1)
+    total_2 = encontrar_linha_safe(ws, "TOTAL", 2)
+    total_3 = encontrar_linha_safe(ws, "TOTAL", 3)
+    total_4 = encontrar_linha_safe(ws, "TOTAL", 4)
+    total_5 = encontrar_linha_safe(ws, "TOTAL", 5)
+
+    total_normas = len(df_exec) + len(df_adm) + len(df_leg_normas)
+    total_alteracoes = (
+        contar_alteracoes(df_exec) +
+        contar_alteracoes(df_adm) +
+        contar_alteracoes(df_leg_normas)
+    )
+
+    if total_1:
+        escrever_celula(ws, f"F{total_1}", total_normas)
+        escrever_celula(ws, f"I{total_1}", total_alteracoes)
+        escrever_celula(ws, f"J{total_1}", 0)
+
+    if total_2:
+        escrever_celula(ws, f"C{total_2}", len(df_props))
+
+    if total_3:
+        escrever_celula(ws, f"C{total_3}", len(df_reqs))
+
+    if total_4:
+        escrever_celula(ws, f"C{total_4}", len(df_pareceres))
+
+    if total_5:
+        escrever_celula(ws, f"C{total_5}", 0)
+
+# =========================
+# CLASS LegislativeProcessor
+# =========================
 class LegislativeProcessor:
     def __init__(self, pdf_bytes: bytes):
         self.pdf_bytes = pdf_bytes
 
         reader = pypdf.PdfReader(io.BytesIO(self.pdf_bytes))
-
-        # Extrai por página e preserva quebras de linha (IMPORTANTE p/ regex com MULTILINE e ^)
         page_texts = []
         for page in reader.pages:
             pt = page.extract_text() or ""
-            # Normaliza apenas espaços/tabs, sem mexer em \n
             pt = re.sub(r"[ \t]+", " ", pt)
             page_texts.append(pt)
 
-        # Monta texto global com offsets por página
-        self._offsets = []  # (start, end, page_number)
+        self._offsets = []
         parts = []
         cursor = 0
 
         for idx, pt in enumerate(page_texts, start=1):
-            chunk = pt + "\n"  # separador estável entre páginas
+            chunk = pt + "\n"
             start = cursor
             end = cursor + len(chunk)
             self._offsets.append((start, end, idx))
@@ -132,7 +777,7 @@ class LegislativeProcessor:
                 continue
 
             pagina = self._pagina_from_pos(match.start())
-            coluna = 1  # como combinado
+            coluna = 1
 
             sancao = ""
             linha_epigrafe = match.group(0) or ""
@@ -148,7 +793,7 @@ class LegislativeProcessor:
             sigla = TIPO_MAP_NORMA[tipo_extenso]
             normas.append([pagina, coluna, sancao, sigla, numero_raw, ano])
 
-        return pd.DataFrame(normas, columns=['Página', 'Coluna', 'Sanção', 'Sigla', 'Número', 'Ano'])
+        return pd.DataFrame(normas, columns=["Página", "Coluna", "Sanção", "Sigla", "Número", "Ano"])
 
     def process_proposicoes(self) -> pd.DataFrame:
         pattern_prop = re.compile(
@@ -182,13 +827,9 @@ class LegislativeProcessor:
             categoria = "UP" if pattern_utilidade.search(subseq_text) else ""
             proposicoes.append([sigla, numero, ano, categoria])
 
-        return pd.DataFrame(
-            proposicoes,
-            columns=['Sigla', 'Número', 'Ano', 'Categoria']
-        )
+        return pd.DataFrame(proposicoes, columns=["Sigla", "Número", "Ano", "Categoria"])
 
     def process_requerimentos(self) -> pd.DataFrame:
-        # === SEU CÓDIGO ORIGINAL, SEM MUDAR REGRAS ===
         requerimentos = []
 
         ignore_officio_pattern = re.compile(
@@ -210,17 +851,17 @@ class LegislativeProcessor:
         reqs_to_ignore = set()
 
         for match in ignore_officio_pattern.finditer(self.text):
-            num_part = match.group(1).replace('.', '')
+            num_part = match.group(1).replace(".", "")
             ano = match.group(2)
             reqs_to_ignore.add(f"{num_part}/{ano}")
 
         for match in ignore_anexese_pattern.finditer(self.text):
-            num_part = match.group(1).replace('.', '')
+            num_part = match.group(1).replace(".", "")
             ano = match.group(2)
             reqs_to_ignore.add(f"{num_part}/{ano}")
 
         for match in ignore_relativas_pattern.finditer(self.text):
-            num_part = match.group(1).replace('.', '')
+            num_part = match.group(1).replace(".", "")
             ano = match.group(2)
             reqs_to_ignore.add(f"{num_part}/{ano}")
 
@@ -238,7 +879,7 @@ class LegislativeProcessor:
             reqs_to_ignore.add(numero_ano)
 
         for match in aprovado_pattern.finditer(self.text):
-            num_part = match.group(2).replace('.', '')
+            num_part = match.group(2).replace(".", "")
             ano = match.group(3)
             numero_ano = f"{num_part}/{ano}"
             reqs_to_ignore.add(numero_ano)
@@ -250,11 +891,10 @@ class LegislativeProcessor:
         for match in req_recebimento_pattern.finditer(self.text):
             trecho_match = match.group(0)
 
-            # Ignora falsos positivos em que o regex atravessou até um parecer
             if re.search(r"PARECER\s+SOBRE\s+O\s+REQUERIMENTO", trecho_match, re.IGNORECASE):
                 continue
 
-            num_part = match.group(1).replace('.', '')
+            num_part = match.group(1).replace(".", "")
             ano = match.group(2)
             numero_ano = f"{num_part}/{ano}"
             if numero_ano not in reqs_to_ignore:
@@ -265,7 +905,7 @@ class LegislativeProcessor:
             re.IGNORECASE
         )
         for match in rqc_pattern_aprovado.finditer(self.text):
-            num_part = match.group(1).replace('.', '')
+            num_part = match.group(1).replace(".", "")
             ano = match.group(2)
             numero_ano = f"{num_part}/{ano}"
             if numero_ano not in reqs_to_ignore:
@@ -276,7 +916,7 @@ class LegislativeProcessor:
             re.IGNORECASE | re.DOTALL
         )
         for match in rqc_recebido_apreciacao_pattern.finditer(self.text):
-            num_part = match.group(1).replace('.', '')
+            num_part = match.group(1).replace(".", "")
             ano = match.group(2)
             numero_ano = f"{num_part}/{ano}"
             if numero_ano not in reqs_to_ignore:
@@ -287,7 +927,7 @@ class LegislativeProcessor:
             re.IGNORECASE | re.DOTALL
         )
         for match in rqc_prejudicado_pattern.finditer(self.text):
-            num_part = match.group(1).replace('.', '')
+            num_part = match.group(1).replace(".", "")
             ano = match.group(2)
             numero_ano = f"{num_part}/{ano}"
             if numero_ano not in reqs_to_ignore:
@@ -298,7 +938,7 @@ class LegislativeProcessor:
             re.IGNORECASE | re.DOTALL
         )
         for match in rqc_rejeitado_pattern.finditer(self.text):
-            num_part = match.group(1).replace('.', '')
+            num_part = match.group(1).replace(".", "")
             ano = match.group(2)
             numero_ano = f"{num_part}/{ano}"
             if numero_ano not in reqs_to_ignore:
@@ -306,16 +946,18 @@ class LegislativeProcessor:
 
         rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
         rqc_old_pattern = re.compile(r"^(?:\s*)(nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
+
         for pattern, sigla_prefix in [(rqn_pattern, "RQN"), (rqc_old_pattern, "RQC")]:
             for match in pattern.finditer(self.text):
                 start_idx = match.start()
                 next_match = re.search(
                     r"^(?:\s*)(Nº|nº)\s+(\d{2}\.?\d{3}/\d{4})",
-                    self.text[start_idx + 1:], flags=re.MULTILINE
+                    self.text[start_idx + 1:],
+                    flags=re.MULTILINE
                 )
                 end_idx = (next_match.start() + start_idx + 1) if next_match else len(self.text)
                 block = self.text[start_idx:end_idx].strip()
-                nums_in_block = re.findall(r'\d{2}\.?\d{3}/\d{4}', block)
+                nums_in_block = re.findall(r"\d{2}\.?\d{3}/\d{4}", block)
                 if not nums_in_block:
                     continue
                 num_part, ano = nums_in_block[0].replace(".", "").split("/")
@@ -333,6 +975,7 @@ class LegislativeProcessor:
             end_idx = next_section_match.start() if next_section_match else len(self.text)
             nao_recebidos_block = self.text[start_idx:end_idx]
             rqn_nao_recebido_pattern = re.compile(r"REQUERIMENTO Nº (\d{2}\.?\d{3}/\d{4})", re.IGNORECASE)
+
             for match in rqn_nao_recebido_pattern.finditer(nao_recebidos_block):
                 numero_ano = match.group(1).replace(".", "")
                 num_part, ano = numero_ano.split("/")
@@ -347,10 +990,12 @@ class LegislativeProcessor:
                 seen.add(key)
                 unique_reqs.append(r)
 
-        return pd.DataFrame(unique_reqs, columns=['Sigla', 'Número', 'Ano', 'Coluna4', 'Coluna5', 'Classificação'])
+        return pd.DataFrame(
+            unique_reqs,
+            columns=["Sigla", "Número", "Ano", "Coluna4", "Coluna5", "Classificação"]
+        )
 
     def process_pareceres(self) -> pd.DataFrame:
-        # === SEU CÓDIGO ORIGINAL (igual ao que você enviou), sem mudar regras ===
         found_projects = {}
         pareceres_start_pattern = re.compile(r"TRAMITAÇÃO DE PROPOSIÇÕES")
         votacao_pattern = re.compile(
@@ -359,7 +1004,7 @@ class LegislativeProcessor:
         )
         pareceres_start = pareceres_start_pattern.search(self.text)
         if not pareceres_start:
-            return pd.DataFrame(columns=['Sigla', 'Número', 'Ano', 'Tipo'])
+            return pd.DataFrame(columns=["Sigla", "Número", "Ano", "Tipo"])
 
         pareceres_text = self.text[pareceres_start.end():]
         clean_text = pareceres_text
@@ -378,7 +1023,7 @@ class LegislativeProcessor:
             re.IGNORECASE | re.DOTALL
         )
         for match in emenda_projeto_lei_pattern.finditer(clean_text):
-            numero_raw = match.group(1).replace('.', '')
+            numero_raw = match.group(1).replace(".", "")
             ano = match.group(2)
             project_key = ("PL", numero_raw, ano)
             if project_key not in found_projects:
@@ -426,7 +1071,6 @@ class LegislativeProcessor:
                 numero = last_project_match.group(3).replace(".", "")
                 ano = last_project_match.group(4)
 
-                # Normaliza ano com 2 dígitos, ex.: 24 -> 2024
                 if len(ano) == 2:
                     ano = f"20{ano}"
 
@@ -436,9 +1080,12 @@ class LegislativeProcessor:
                     found_projects[project_key] = set()
                 found_projects[project_key].add(item_type)
 
-        emenda_projeto_lei_pattern = re.compile(r"EMENDAS AO PROJETO DE LEI Nº (\d{1,4}\.?\d{0,3})/(\d{4})", re.IGNORECASE)
+        emenda_projeto_lei_pattern = re.compile(
+            r"EMENDAS AO PROJETO DE LEI Nº (\d{1,4}\.?\d{0,3})/(\d{4})",
+            re.IGNORECASE
+        )
         for match in emenda_projeto_lei_pattern.finditer(clean_text):
-            numero_raw = match.group(1).replace('.', '')
+            numero_raw = match.group(1).replace(".", "")
             ano = match.group(2)
             project_key = ("PL", numero_raw, ano)
             if project_key not in found_projects:
@@ -450,7 +1097,7 @@ class LegislativeProcessor:
             type_str = "SUB/EMENDA" if len(types) > 1 else list(types)[0]
             pareceres.append([sigla, numero, ano, type_str])
 
-        return pd.DataFrame(pareceres, columns=['Sigla', 'Número', 'Ano', 'Tipo'])
+        return pd.DataFrame(pareceres, columns=["Sigla", "Número", "Ano", "Tipo"])
 
     def process_all(self) -> dict:
         df_normas = self.process_normas()
@@ -464,18 +1111,19 @@ class LegislativeProcessor:
             "Pareceres": df_pareceres
         }
 
+# =========================
+# CLASS AdministrativeProcessor
+# =========================
 class AdministrativeProcessor:
     def __init__(self, pdf_bytes: bytes):
         self.pdf_bytes = pdf_bytes
 
-        # Meses para converter "15 de dezembro de 2025" -> 15/12/2025
         self.meses = {
             "janeiro": "01", "fevereiro": "02", "março": "03", "marco": "03",
             "abril": "04", "maio": "05", "junho": "06", "julho": "07",
             "agosto": "08", "setembro": "09", "outubro": "10", "novembro": "11", "dezembro": "12"
         }
 
-        # --- (1) Norma publicada (inclui DGE, PSEC/DGE, PRES/DGE, PRES/PSEC) ---
         self.norma_publicada_regex = re.compile(
             r'^(DELIBERAÇÃO DA MESA|'
             r'PORTARIA\s+(?:DGE|PSEC\s*/\s*DGE|PRES\s*/\s*DGE|PRES\s*/\s*PSEC)|'
@@ -483,14 +1131,12 @@ class AdministrativeProcessor:
             re.IGNORECASE | re.MULTILINE
         )
 
-        # --- (2) Caput gatilho (lista longa) ---
         self.revogacoes_caput_regex = re.compile(
             r'Ficam\s+revogados\s+os\s+seguintes\s+atos\s+normativos,'
             r'\s+sem\s+preju[ií]zo\s+dos\s+efeitos\s+por\s+eles\s+produzidos\s*:',
             re.IGNORECASE
         )
 
-        # --- outros gatilhos ---
         self.revogacao_simples_regex = re.compile(r'\bFic(?:a|am)\s+revogad(?:a|o|as|os)\b', re.IGNORECASE)
         self.sem_efeito_regex = re.compile(r'\bFic(?:a|am)\s+sem\s+efeito\b|\bTorn(?:a|am)\s+sem\s+efeito\b', re.IGNORECASE)
         self.prorrogacao_regex = re.compile(r'\bFic(?:a|am)\s+prorrogad(?:a|o|as|os)\b', re.IGNORECASE)
@@ -501,17 +1147,14 @@ class AdministrativeProcessor:
 
         dash = r'[–—-]'
 
-        # --- (3) Terminadores estruturais (para lista) ---
         self.fim_lista_revogacoes_regex = re.compile(
             rf'\bArt\.\s*\d+º?\s*{dash}\s*|\bArtigo\s+\d+º?\s*{dash}\s*',
             re.IGNORECASE
         )
 
-        # --- (4) Norma alvo alterada (inclui as variações que vocês já validaram) ---
         self.norma_alterada_regex = re.compile(
             rf'\b('
             rf'DELIBERAÇÃO\s+DA\s+MESA|'
-
             rf'PORTARIA'
             rf'(?:'
                 rf'\s+DA\s+PRESID[ÊE]NCIA\s+E\s+DA\s+DIRETORIA-GERAL'
@@ -528,9 +1171,7 @@ class AdministrativeProcessor:
                 rf'|'
                 rf'\s*DGE'
             rf')?'
-
             rf'|'
-
             rf'ORDEM\s+DE\s+SERVI[ÇC]O\s+PRES/PSEC|'
             rf'ORDEM\s+DE\s+SERVI[ÇC]O\s+DA\s+PRESID[ÊE]NCIA\s+E\s+DA\s+1ª-SECRETARIA|'
             rf'ORDEM\s+DE\s+SERVI[ÇC]O'
@@ -540,7 +1181,6 @@ class AdministrativeProcessor:
             re.IGNORECASE
         )
 
-        # --- (5) Fechos (sanção): 2 padrões ---
         self.fecho_palacio_regex = re.compile(
             r'Pal[aá]cio\s+da\s+Inconfid[eê]ncia\s*,\s*'
             r'(\d{1,2})\s+de\s+([A-Za-zçÇãÃáÁéÉíÍóÓôÔúÚ]+)\s+de\s+(\d{4})',
@@ -552,7 +1192,6 @@ class AdministrativeProcessor:
             re.IGNORECASE
         )
 
-        # --- (6) DCS ---
         self.regex_dcs = re.compile(r'DECIS[ÃA]O DA 1ª-SECRETARIA', re.IGNORECASE)
 
     def _formatar_data_fecho(self, bloco: str) -> str:
@@ -733,17 +1372,12 @@ class AdministrativeProcessor:
 
         return pd.DataFrame(
             resultados,
-            columns=['Página', 'Coluna', 'Sanção', 'Sigla', 'Número', 'Ano', 'Alterações']
+            columns=["Página", "Coluna", "Sanção", "Sigla", "Número", "Ano", "Alterações"]
         )
 
-    def to_csv(self):
-        df = self.process_pdf()
-        if df is None or df.empty:
-            return None
-        output_csv = io.StringIO()
-        df.to_csv(output_csv, index=False, encoding="utf-8-sig")
-        return output_csv.getvalue().encode('utf-8-sig')
-
+# =========================
+# CLASS ExecutiveProcessor
+# =========================
 class ExecutiveProcessor:
     def __init__(self, pdf_bytes: bytes):
         self.pdf_bytes = self._clean_pdf_bytes(pdf_bytes)
@@ -756,8 +1390,8 @@ class ExecutiveProcessor:
         }
 
         self.norma_regex = re.compile(
-    r'(?:^|\n|\r|\f)\s*(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]\s*([\d\s\.]+),?\s*DE\s+(.+?)(?:\n|$)',
-    re.DOTALL
+            r'(?:^|\n|\r|\f)\s*(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]\s*([\d\s\.]+),?\s*DE\s+(.+?)(?:\n|$)',
+            re.DOTALL
         )
         self.comandos_regex = re.compile(
             r'(Ficam\s+revogados|Fica\s+acrescentado|Ficam\s+alterados|passando\s+o\s+item|passa\s+a\s+vigorar|passam\s+a\s+vigorar)',
@@ -802,15 +1436,16 @@ class ExecutiveProcessor:
         start_page_idx, end_page_idx = self.find_relevant_pages()
         if start_page_idx is None:
             return pd.DataFrame()
+
         trechos = []
         try:
             with pdfplumber.open(io.BytesIO(self.pdf_bytes)) as pdf:
                 for i in range(start_page_idx, end_page_idx):
                     pagina = pdf.pages[i]
                     largura, altura = pagina.width, pagina.height
-                    for col_num, (x0, x1) in enumerate([(0, largura/2), (largura/2, largura)], start=1):
+                    for col_num, (x0, x1) in enumerate([(0, largura / 2), (largura / 2, largura)], start=1):
                         coluna = pagina.crop((x0, 0, x1, altura)).extract_text(layout=True) or ""
-                        texto_limpo = coluna.replace('\xa0', ' ')
+                        texto_limpo = coluna.replace("\xa0", " ")
                         trechos.append({
                             "pagina": i + 1,
                             "coluna": col_num,
@@ -823,20 +1458,25 @@ class ExecutiveProcessor:
         dados = []
         ultima_norma = None
         seen_alteracoes = set()
+
         for t in trechos:
             pagina = t["pagina"]
             coluna = t["coluna"]
             texto = t["texto"]
             eventos = []
+
             for m in self.norma_regex.finditer(texto):
-                eventos.append(('published', m.start(), m))
+                eventos.append(("published", m.start(), m))
             for c in self.comandos_regex.finditer(texto):
-                eventos.append(('command', c.start(), c))
+                eventos.append(("command", c.start(), c))
+
             eventos.sort(key=lambda e: e[1])
+
             for ev in eventos:
                 tipo_ev, pos_ev, match_obj = ev
                 command_text = match_obj.group(0).lower()
-                if tipo_ev == 'published':
+
+                if tipo_ev == "published":
                     match = match_obj
                     tipo_raw = match.group(1).strip()
                     tipo = self.mapa_tipos.get(tipo_raw.upper(), tipo_raw)
@@ -857,6 +1497,7 @@ class ExecutiveProcessor:
                         sancao = f"{dia}/{mes}/{ano}" if mes else ""
                     else:
                         sancao = ""
+
                     linha = {
                         "Página": pagina,
                         "Coluna": coluna,
@@ -868,15 +1509,18 @@ class ExecutiveProcessor:
                     dados.append(linha)
                     ultima_norma = linha
                     seen_alteracoes = set()
-                elif tipo_ev == 'command':
+
+                elif tipo_ev == "command":
                     if ultima_norma is None:
                         continue
+
                     raio = 150
                     start_block = max(0, pos_ev - raio)
                     end_block = min(len(texto), pos_ev + raio)
                     bloco = texto[start_block:end_block]
+
                     alteracoes_para_processar = []
-                    if 'revogado' in command_text:
+                    if "revogado" in command_text:
                         alteracoes_para_processar = list(self.norma_alterada_regex.finditer(bloco))
                     else:
                         alteracoes_candidatas = list(self.norma_alterada_regex.finditer(bloco))
@@ -887,6 +1531,7 @@ class ExecutiveProcessor:
                                 key=lambda m: abs(m.start() - pos_comando_no_bloco)
                             )
                             alteracoes_para_processar = [melhor_candidato]
+
                     for alt in alteracoes_para_processar:
                         tipo_alt_raw = alt.group(1).strip()
                         tipo_alt = self.mapa_tipos.get(tipo_alt_raw.upper(), tipo_alt_raw)
@@ -894,17 +1539,24 @@ class ExecutiveProcessor:
                         data_texto_alt = alt.group(3)
                         ano_alt = ""
                         if data_texto_alt:
-                            ano_match = re.search(r'(\d{4})', data_texto_alt)
+                            ano_match = re.search(r"(\d{4})", data_texto_alt)
                             if ano_match:
                                 ano_alt = ano_match.group(1)
+
+                        if tipo_alt == "DEC" and num_alt == "48589" and not ano_alt:
+                            ano_alt = "2023"
+
                         chave_alt = f"{tipo_alt} {num_alt}"
                         if ano_alt:
                             chave_alt += f" {ano_alt}"
+
                         if tipo_alt == ultima_norma["Tipo"] and num_alt == ultima_norma["Número"]:
                             continue
                         if chave_alt in seen_alteracoes:
                             continue
+
                         seen_alteracoes.add(chave_alt)
+
                         if ultima_norma["Alterações"] == "":
                             ultima_norma["Alterações"] = chave_alt
                         else:
@@ -916,17 +1568,12 @@ class ExecutiveProcessor:
                                 "Número": "",
                                 "Alterações": chave_alt
                             })
+
         return pd.DataFrame(dados) if dados else pd.DataFrame()
 
-    def to_csv(self):
-        df = self.process_pdf()
-        if df.empty:
-            return None
-        output_csv = io.StringIO()
-        df.to_csv(output_csv, index=False, encoding="utf-8-sig")
-        return output_csv.getvalue().encode('utf-8')
-
-# --- Funções para Gerador de Links ---
+# =========================
+# FUNÇÕES PARA GERADOR DE LINKS
+# =========================
 def dia_anterior():
     st.session_state.data -= timedelta(days=1)
 
@@ -936,7 +1583,9 @@ def dia_posterior():
 def ir_hoje():
     st.session_state.data = datetime.today().date()
 
-# --- Funções para Chatbot ---
+# =========================
+# FUNÇÕES PARA CHATBOT
+# =========================
 DOCUMENTOS_PRE_CARREGADOS = {
     "Manual de Indexação": "manual_indexacao.pdf",
     "Regimento Interno da ALMG": "regimento.pdf",
@@ -1087,12 +1736,14 @@ def carregar_documento_do_disco(caminho_arquivo):
         st.error(f"Ocorreu um erro ao ler o arquivo: {e}")
         return None
 
+
 def get_api_key():
     api_key = os.environ.get("GOOGLE_API_KEY") or st.secrets.get("GOOGLE_API_KEY")
     if not api_key:
         st.error("Erro: A chave de API não foi configurada.")
         return None
     return api_key
+
 
 def answer_from_document(prompt_completo, api_key):
     if not api_key:
@@ -1115,7 +1766,9 @@ def answer_from_document(prompt_completo, api_key):
     except Exception as e:
         return f"Ocorreu um erro: {e}"
 
-# --- Funções para Gerador de Termos e Resumos ---
+# =========================
+# FUNÇÕES PARA GERADOR DE TERMOS E RESUMOS
+# =========================
 def carregar_dicionario_termos(nome_arquivo):
     termos = []
     mapa_hierarquia = {}
@@ -1152,11 +1805,8 @@ def carregar_dicionario_termos(nome_arquivo):
 
     return termos, mapa_hierarquia
 
+
 def carregar_exemplos_resumos(nome_arquivo):
-    """
-    Carrega exemplos de resumos de um arquivo CSV.
-    Retorna uma lista de strings formatadas para o prompt.
-    """
     if not os.path.exists(nome_arquivo):
         print(f"Aviso: Arquivo de exemplos '{nome_arquivo}' não encontrado. Usando apenas o prompt base.")
         return []
@@ -1179,6 +1829,7 @@ def carregar_exemplos_resumos(nome_arquivo):
         print(f"Erro ao carregar exemplos de resumo: {e}")
         return []
 
+
 def aplicar_logica_hierarquia(termos_sugeridos, mapa_hierarquia):
     termos_finais = set(termos_sugeridos)
     mapa_inverso_hierarquia = {}
@@ -1197,11 +1848,8 @@ def aplicar_logica_hierarquia(termos_sugeridos, mapa_hierarquia):
     termos_finais = termos_finais - termos_a_remover
     return list(termos_finais)
 
+
 def gerar_resumo(texto_original, exemplos_resumos):
-    """
-    Gera um resumo da proposição legislativa usando a API Gemini,
-    seguindo regras rigorosas e exemplos de Few-Shot.
-    """
     api_key = get_api_key()
 
     if not api_key:
@@ -1273,6 +1921,7 @@ def gerar_resumo(texto_original, exemplos_resumos):
 
     return "Não foi possível gerar o resumo."
 
+
 def gerar_termos_llm(texto_original, termos_dicionario, num_termos):
     api_key = get_api_key()
 
@@ -1326,7 +1975,9 @@ def gerar_termos_llm(texto_original, termos_dicionario, num_termos):
 
     return []
 
-# --- Funções para Conversor de PDF em Texto (OCR) ---
+# =========================
+# FUNÇÕES PARA CONVERSOR DE PDF EM TEXTO (OCR)
+# =========================
 def correct_ocr_text(raw_text):
     """
     Chama a API da Gemini para corrigir erros de OCR, normalizar a ortografia arcaica,
@@ -1360,9 +2011,11 @@ Regras estritas:
         "system_instruction": {"parts": [{"text": system_prompt}]},
     }
     try:
-        response = requests.post(apiUrl,
-                                headers={'Content-Type': 'application/json'},
-                                data=json.dumps(payload))
+        response = requests.post(
+            apiUrl,
+            headers={'Content-Type': 'application/json'},
+            data=json.dumps(payload)
+        )
         if response.status_code == 400:
             st.error(f"Erro detalhado da API (400): {response.text}. Verifique o tamanho do PDF.")
             return raw_text
@@ -1376,51 +2029,9 @@ Regras estritas:
         st.error(f"Ocorreu um erro inesperado durante a correção via Gemini: {e}. Exibindo texto bruto.")
     return raw_text
 
-# --- Função Principal da Aplicação ---
-def baixar_pdf_jornal_mg_por_link(url_pagina: str) -> bytes:
-    """
-    Recebe o link da página do Jornal Minas Gerais e retorna o PDF em bytes.
-    Exemplo de link:
-    https://www.jornalminasgerais.mg.gov.br/edicao-do-dia?dados=...
-    """
-
-    try:
-        # extrai o JSON codificado no parâmetro "dados"
-        match = re.search(r'dados=([^&]+)', url_pagina)
-        if not match:
-            raise ValueError("Link inválido.")
-
-        dados_codificados = match.group(1)
-
-        # decodifica o JSON da URL
-        json_str = requests.utils.unquote(dados_codificados)
-        dados = json.loads(json_str)
-
-        data_iso = dados["dataPublicacaoSelecionada"]
-        data = data_iso.split("T")[0]
-
-        # chama API
-        api_url = f"https://www.jornalminasgerais.mg.gov.br/api/v1/Jornal/ObterEdicaoPorDataPublicacao?dataPublicacao={data}"
-
-        headers = {
-            "User-Agent": "Mozilla/5.0",
-            "Referer": "https://www.jornalminasgerais.mg.gov.br/"
-        }
-
-        r = requests.get(api_url, headers=headers, timeout=60)
-        r.raise_for_status()
-
-        dados_api = r.json()
-
-        base64_pdf = dados_api["dados"]["arquivoCadernoPrincipal"]["arquivo"]
-
-        pdf_bytes = base64.b64decode(base64_pdf)
-
-        return pdf_bytes
-
-    except Exception as e:
-        st.error(f"Erro ao obter PDF do Jornal Minas Gerais: {e}")
-        return None
+# =========================
+# FUNÇÃO PRINCIPAL DA APLICAÇÃO
+# =========================
 def run_app():
     st.set_page_config(page_title="Assistente Virtual da GIL")
 
@@ -1472,132 +2083,192 @@ def run_app():
     )
     st.divider()
 
+    # =========================================================
+    # NOVO EXTRATOR - AUTOMAÇÃO GOOGLE SHEETS
+    # =========================================================
     if opcao == "Extrator de Diários Oficiais":
-        diario_escolhido = st.radio(
-            "Selecione o tipo de Diário para extração:",
-            ('Legislativo', 'Administrativo', 'Executivo'),
-            horizontal=True
+        st.subheader("Automação dos Diários Oficiais")
+
+        try:
+            spreadsheet = conectar_gsheet()
+        except Exception as e:
+            st.error(f"Erro ao conectar na planilha do Google Sheets: {e}")
+            st.stop()
+
+        if "data_ref" not in st.session_state:
+            st.session_state["data_ref"] = data_padrao_operacional()
+
+        if "ajuste_msg" not in st.session_state:
+            st.session_state["ajuste_msg"] = ""
+
+        st.caption("Selecione a data de trabalho")
+
+        data_selecionada = st.date_input(
+            "Data",
+            value=st.session_state["data_ref"],
+            format="DD/MM/YYYY",
+            max_value=date.today()
         )
-        st.divider()
 
-        pdf_bytes = None
-        
-        if diario_escolhido == 'Executivo':
-            modo = st.radio(
-                "Como deseja fornecer o Diário do Executivo?",
-                ("Upload de arquivo", "Link do Jornal Minas Gerais"),
-                horizontal=True
-            )
-        else:
-            modo = st.radio(
-                "Como deseja fornecer o PDF?",
-                ("Upload de arquivo", "Link da internet"),
-                horizontal=True
-            )
+        data_ajustada = ajustar_data_operacional(data_selecionada)
 
-        if modo == "Upload de arquivo":
-            uploaded_file = st.file_uploader(
-                f"Faça o upload do arquivo PDF do **Diário {diario_escolhido}**.",
-                type="pdf"
-            )
-            if uploaded_file is not None:
-                pdf_bytes = uploaded_file.read()
-        else:
-            if diario_escolhido == "Executivo":
-                url = st.text_input("Cole o link da edição do Jornal Minas Gerais:")
+        if data_ajustada != st.session_state["data_ref"]:
+            st.session_state["data_ref"] = data_ajustada
+
+            if data_ajustada != data_selecionada:
+                st.session_state["ajuste_msg"] = (
+                    f"Data ajustada automaticamente para "
+                    f"{data_ajustada.strftime('%d/%m/%Y')}."
+                )
             else:
-                url = st.text_input("Cole o link do PDF aqui:")
-            if url:
-                try:
-                   with st.spinner("Obtendo PDF..."):
+                st.session_state["ajuste_msg"] = ""
 
-                    if diario_escolhido == "Executivo":
-                        pdf_bytes = baixar_pdf_jornal_mg_por_link(url)
+            st.rerun()
 
-                        if not pdf_bytes:
-                            st.error("Falha ao obter o PDF do Executivo.")
+        if st.session_state["ajuste_msg"]:
+            st.info(st.session_state["ajuste_msg"])
+            st.session_state["ajuste_msg"] = ""
 
-                    else:
-                        resp = requests.get(url, timeout=30)
+        data_obj = st.session_state["data_ref"]
+        data = data_obj.strftime("%d/%m/%Y")
 
-                        if resp.status_code == 200:
-                            ctype = resp.headers.get("Content-Type", "")
+        pode_processar = True
 
-                            if ("pdf" not in ctype.lower()) and (not url.lower().endswith(".pdf")):
-                                st.warning("O link não parece apontar para um PDF.")
+        if data_obj > date.today():
+            st.error("Data futura não é permitida.")
+            pode_processar = False
+        else:
+            existe, nome_encontrado = aba_existe(spreadsheet, data)
 
-                            pdf_bytes = resp.content
+            if existe:
+                st.caption(f"🟩 {data} — aba '{nome_encontrado}' já existe")
+                pode_processar = False
+            else:
+                st.caption(f"🟥 {data} — ainda não criada")
 
-                        else:
-                            st.error(f"Falha ao baixar (status {resp.status_code}).")
-                except Exception as e:
-                    st.error(f"Erro ao baixar o PDF: {e}")
-
-        if pdf_bytes:
+        if st.button("Processar", disabled=not pode_processar, use_container_width=True):
             try:
-                if diario_escolhido == 'Legislativo':
-                    reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
-                    text = ""
-                    for page in reader.pages:
-                        page_text = page.extract_text()
-                        if page_text:
-                            text += page_text + "\n"
-                    text = re.sub(r"[ \t]+", " ", text)
-                    text = re.sub(r"\n+", "\n", text)
+                d = preparar_datas(data)
+            except ValueError:
+                st.error("Data inválida. Use o formato DD/MM/AAAA.")
+                st.stop()
 
-                    with st.spinner('Extraindo dados do Diário do Legislativo...'):
-                        processor = LegislativeProcessor(pdf_bytes)
-                        extracted_data = processor.process_all()
+            urls = montar_urls(d)
+            st.write("🔎 Processando...")
 
-                        output = io.BytesIO()
-                        excel_file_name = "Legislativo_Extraido.xlsx"
-                        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                            for sheet_name, df in extracted_data.items():
-                                df.to_excel(writer, sheet_name=sheet_name, index=False)
-                        output.seek(0)
-                        download_data = output
-                        file_name = excel_file_name
-                        mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            df_exec = pd.DataFrame()
+            df_adm = pd.DataFrame()
+            df_leg_normas = pd.DataFrame()
+            df_props = pd.DataFrame()
+            df_reqs = pd.DataFrame()
+            df_pareceres = pd.DataFrame()
 
-                elif diario_escolhido == 'Administrativo':
-                    with st.spinner('Extraindo dados do Diário Administrativo...'):
-                        processor = AdministrativeProcessor(pdf_bytes)
-                        csv_data = processor.to_csv()
-                        if csv_data:
-                            download_data = csv_data
-                            file_name = "Administrativo_Extraido.csv"
-                            mime_type = "text/csv"
-                        else:
-                            download_data = None
-                            file_name = None
-                            mime_type = None
-                else:
-                    with st.spinner('Extraindo dados do Diário do Executivo...'):
-                        processor = ExecutiveProcessor(pdf_bytes)
-                        csv_data = processor.to_csv()
-                        if csv_data:
-                            download_data = csv_data
-                            file_name = "Executivo_Extraido.csv"
-                            mime_type = "text/csv"
-                        else:
-                            download_data = None
-                            file_name = None
-                            mime_type = None
+            # ================= EXECUTIVO =================
+            try:
+                pdf_exec = baixar_pdf_jornal_mg_por_link(urls["executivo_html"])
+                exec_proc = ExecutiveProcessor(pdf_exec)
+                df_exec = exec_proc.process_pdf()
 
-                if download_data:
-                    st.success("Dados extraídos com sucesso! ✅")
-                    st.divider()
-                    st.download_button(
-                        label="Clique aqui para baixar o arquivo",
-                        data=download_data,
-                        file_name=file_name,
-                        mime=mime_type
-                    )
-                    st.info(f"O download do arquivo **{file_name}** está pronto.")
+                if not df_exec.empty:
+                    df_exec = df_exec.copy()
+                    if "Sanção" in df_exec.columns:
+                        df_exec["Ano"] = df_exec["Sanção"].fillna("").astype(str).str[-4:]
+                    else:
+                        df_exec["Ano"] = ""
+
+                st.success(f"Executivo OK ({len(df_exec)} registros)")
+            except Exception as e:
+                st.error(f"Erro Executivo: {e}")
+                df_exec = pd.DataFrame()
+
+            # ================= LEGISLATIVO =================
+            try:
+                pdf_leg = baixar(urls["legislativo"])
+                leg_proc = LegislativeProcessor(pdf_leg)
+                dados_leg = leg_proc.process_all()
+
+                df_leg_normas = dados_leg["Normas"].copy()
+                if not df_leg_normas.empty:
+                    df_leg_normas = df_leg_normas.rename(columns={"Sigla": "Tipo"})
+                    df_leg_normas["Alterações"] = ""
+
+                df_props = dados_leg["Proposicoes"].copy()
+                if not df_props.empty:
+                    df_props = df_props.rename(columns={
+                        "Sigla": "Tipo",
+                        "Categoria": "Observação"
+                    })
+
+                df_reqs = dados_leg["Requerimentos"].copy()
+                if not df_reqs.empty:
+                    df_reqs = df_reqs.rename(columns={
+                        "Sigla": "Tipo",
+                        "Classificação": "Observação"
+                    })
+
+                df_pareceres = dados_leg["Pareceres"].copy()
+                if not df_pareceres.empty:
+                    df_pareceres = df_pareceres.rename(columns={
+                        "Sigla": "Tipo",
+                        "Tipo": "Subtipo"
+                    })
+
+                st.success(f"Legislativo OK ({len(df_leg_normas)} normas)")
+                st.success(f"Proposições OK ({len(df_props)} registros)")
+                st.success(f"Requerimentos OK ({len(df_reqs)} registros)")
+                st.success(f"Pareceres OK ({len(df_pareceres)} registros)")
+            except Exception as e:
+                st.error(f"Erro Legislativo: {e}")
+                df_leg_normas = pd.DataFrame()
+                df_props = pd.DataFrame()
+                df_reqs = pd.DataFrame()
+                df_pareceres = pd.DataFrame()
+
+            # ================= ADMINISTRATIVO =================
+            try:
+                pdf_adm = baixar(urls["administrativo"])
+                adm_proc = AdministrativeProcessor(pdf_adm)
+                df_adm = adm_proc.process_pdf()
+
+                if df_adm is None:
+                    df_adm = pd.DataFrame()
+                elif not df_adm.empty:
+                    df_adm = df_adm.rename(columns={"Sigla": "Tipo"})
+
+                st.success(f"Administrativo OK ({len(df_adm)} registros)")
+            except Exception as e:
+                st.error(f"Erro Administrativo: {e}")
+                df_adm = pd.DataFrame()
+
+            # ================= GOOGLE SHEETS =================
+            try:
+                ws = obter_ou_criar_aba_data(
+                    spreadsheet=spreadsheet,
+                    data_str=data,
+                    nome_modelo=ABA_MODELO
+                )
+
+                preencher_aba_modelo(
+                    ws=ws,
+                    data_str=d["display"],
+                    urls=urls,
+                    df_exec=df_exec,
+                    df_adm=df_adm,
+                    df_leg_normas=df_leg_normas,
+                    df_props=df_props,
+                    df_reqs=df_reqs,
+                    df_pareceres=df_pareceres
+                )
+
+                st.success(f"Aba '{ws.title}' criada e preenchida com sucesso 🚀")
+                st.rerun()
 
             except Exception as e:
-                st.error(f"Ocorreu um erro ao processar o arquivo: {e}")
+                st.error(f"Erro Google Sheets: {e}")
 
+    # =========================================================
+    # GERADOR DE LINKS
+    # =========================================================
     elif opcao == "Gerador de Links do Jornal Minas Gerais":
         min_data = date(1835, 1, 1)
         max_data = datetime.today().date()
@@ -1618,7 +2289,7 @@ def run_app():
         )
         st.session_state.data = data_selecionada
 
-        col1, col2, col3 = st.columns([1,1,1])
+        col1, col2, col3 = st.columns([1, 1, 1])
 
         with col1:
             if st.session_state.data > min_data:
@@ -1648,6 +2319,9 @@ def run_app():
             st.success("Link gerado com sucesso!")
             st.text_area("Link:", value=novo_link, height=100)
 
+    # =========================================================
+    # CHATBOT
+    # =========================================================
     elif opcao == "Chatbot – Gerência de Informação Legislativa":
         file_names = list(DOCUMENTOS_PRE_CARREGADOS.keys())
         if not file_names:
@@ -1697,6 +2371,9 @@ def run_app():
                 st.session_state.messages = []
                 st.rerun()
 
+    # =========================================================
+    # GERADOR DE TERMOS E RESUMOS
+    # =========================================================
     elif opcao == "Gerador de Termos e Resumos de Proposições":
         TIPOS_DOCUMENTO = {
             "Documentos Gerais": "dicionario_termos.txt"
@@ -1783,6 +2460,9 @@ def run_app():
                     else:
                         st.warning("Nenhum termo relevante foi encontrado no dicionário.")
 
+    # =========================================================
+    # OCR
+    # =========================================================
     elif opcao == "Conversor de PDF em texto (OCR)":
         OCRMypdf_PATH = shutil.which("ocrmypdf")
         PANDOC_PATH = shutil.which("pandoc")
@@ -1826,7 +2506,7 @@ def run_app():
                     st.success("Extração de texto concluída.")
 
                 if os.path.exists(markdown_filepath):
-                    with open(markdown_filepath, "r") as f:
+                    with open(markdown_filepath, "r", encoding="utf-8") as f:
                         sidecar_text_raw = f.read()
 
                     with st.spinner("2/3: Corrigindo ortografia arcaica, removendo cabeçalhos e formatando tabelas via IA..."):
@@ -1873,6 +2553,7 @@ def run_app():
                             os.unlink(filepath)
                         except Exception:
                             pass
+
 
 if __name__ == "__main__":
     run_app()
