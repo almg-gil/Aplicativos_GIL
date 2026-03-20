@@ -2234,23 +2234,23 @@ def run_app():
 
             # ================= EXECUTIVO =================
             # ================= EXECUTIVO =================
-try:
-    garantir_playwright_chromium()
-    pdf_exec = baixar_pdf_jornal_mg_por_link(urls["executivo_html"])
-    exec_proc = ExecutiveProcessor(pdf_exec)
-    df_exec = exec_proc.process_pdf()
+        try:
+            garantir_playwright_chromium()
+            pdf_exec = baixar_pdf_jornal_mg_por_link(urls["executivo_html"])
+            exec_proc = ExecutiveProcessor(pdf_exec)
+            df_exec = exec_proc.process_pdf()
 
-    if not df_exec.empty:
-        df_exec = df_exec.copy()
-        if "Sanção" in df_exec.columns:
-            df_exec["Ano"] = df_exec["Sanção"].fillna("").astype(str).str[-4:]
-        else:
-            df_exec["Ano"] = ""
+            if not df_exec.empty:
+            df_exec = df_exec.copy()
+            if "Sanção" in df_exec.columns:
+                df_exec["Ano"] = df_exec["Sanção"].fillna("").astype(str).str[-4:]
+            else:
+                df_exec["Ano"] = ""
 
-    st.success(f"Executivo OK ({len(df_exec)} registros)")
-except Exception as e:
-    st.error(f"Erro Executivo: {e}")
-    df_exec = pd.DataFrame()
+            st.success(f"Executivo OK ({len(df_exec)} registros)")
+        except Exception as e:
+            st.error(f"Erro Executivo: {e}")
+            df_exec = pd.DataFrame()
 
             # ================= LEGISLATIVO =================
             try:
