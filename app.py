@@ -418,16 +418,17 @@ def baixar(url):
 # UTILITÁRIOS EXTRATOR
 # =========================
 def classify_req(segment: str) -> str:
-    segment_lower = segment.lower()
-    if "seja formulado voto de congratulações" in segment_lower:
+    s = re.sub(r"\s+", " ", segment).strip().lower()
+
+    if "seja formulado voto de congratulações" in s:
         return "Voto de congratulações"
-    if "manifestação de pesar" in segment_lower:
+    if "manifestação de pesar" in s:
         return "Manifestação de pesar"
-    if "manifestação de repúdio" in segment_lower:
+    if "manifestação de repúdio" in s:
         return "Manifestação de repúdio"
-    if "moção de aplauso" in segment_lower:
+    if "moção de aplauso" in s:
         return "Moção de aplauso"
-    if "r seja formulada manifestação de apoio" in segment_lower:
+    if "manifestação de apoio" in s:
         return "Manifestação de apoio"
     return ""
 
