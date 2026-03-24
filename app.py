@@ -1648,7 +1648,7 @@ class ExecutiveProcessor:
                     if ultima_norma is None:
                         continue
 
-                    raio = 150
+                    raio = 250
                     start_block = max(0, pos_ev - raio)
                     end_block = min(len(texto), pos_ev + raio)
                     bloco = texto[start_block:end_block]
