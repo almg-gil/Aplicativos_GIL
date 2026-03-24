@@ -1045,20 +1045,20 @@ class LegislativeProcessor:
                 requerimentos.append(["RQC", num_part, ano, "", "", "Rejeitado"])
 
         def bloco_parece_requerimento_real(block: str) -> bool:
-    b = re.sub(r"\s+", " ", block).strip().lower()
+            b = re.sub(r"\s+", " ", block).strip().lower()
 
-    indicadores = [
-        "em que requer",
-        "requer seja",
-        "requerem seja",
-        "que seja formulado voto de congratulações",
-        "manifestação de pesar",
-        "manifestação de repúdio",
-        "moção de aplauso",
-        "manifestação de apoio",
-    ]
+            indicadores = [
+                "em que requer",
+                "requer seja",
+                "requerem seja",
+                "que seja formulado voto de congratulações",
+                "manifestação de pesar",
+                "manifestação de repúdio",
+                "moção de aplauso",
+                "manifestação de apoio",
+            ]
 
-    return any(ind in b for ind in indicadores)
+            return any(ind in b for ind in indicadores)
         
         rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
         rqc_old_pattern = re.compile(r"^(?:\s*)(nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
