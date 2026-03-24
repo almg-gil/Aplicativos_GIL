@@ -1044,28 +1044,49 @@ class LegislativeProcessor:
             if numero_ano not in reqs_to_ignore:
                 requerimentos.append(["RQC", num_part, ano, "", "", "Rejeitado"])
 
+        def bloco_parece_requerimento_real(block: str) -> bool:
+    b = re.sub(r"\s+", " ", block).strip().lower()
+
+    indicadores = [
+        "em que requer",
+        "requer seja",
+        "requerem seja",
+        "que seja formulado voto de congratulações",
+        "manifestação de pesar",
+        "manifestação de repúdio",
+        "moção de aplauso",
+        "manifestação de apoio",
+    ]
+
+    return any(ind in b for ind in indicadores)
+        
         rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
         rqc_old_pattern = re.compile(r"^(?:\s*)(nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
 
         for pattern, sigla_prefix in [(rqn_pattern, "RQN"), (rqc_old_pattern, "RQC")]:
-            for match in pattern.finditer(self.text):
-                start_idx = match.start()
-                next_match = re.search(
-                    r"^(?:\s*)(Nº|nº)\s+(\d{2}\.?\d{3}/\d{4})",
-                    self.text[start_idx + 1:],
-                    flags=re.MULTILINE
-                )
-                end_idx = (next_match.start() + start_idx + 1) if next_match else len(self.text)
-                block = self.text[start_idx:end_idx].strip()
-                nums_in_block = re.findall(r"\d{2}\.?\d{3}/\d{4}", block)
-                if not nums_in_block:
-                    continue
+    for match in pattern.finditer(self.text):
+        start_idx = match.start()
+        next_match = re.search(
+            r"^(?:\s*)(Nº|nº)\s+(\d{2}\.?\d{3}/\d{4})",
+            self.text[start_idx + 1:],
+            flags=re.MULTILINE
+        )
+        end_idx = (next_match.start() + start_idx + 1) if next_match else len(self.text)
+        block = self.text[start_idx:end_idx].strip()
+        nums_in_block = re.findall(r"\d{2}\.?\d{3}/\d{4}", block)
+        if not nums_in_block:
+            continue
 
-                num_part, ano = nums_in_block[0].replace(".", "").split("/")
-                numero_ano = f"{num_part}/{ano}"
-                if numero_ano not in reqs_to_ignore:
-                    classif = classify_req(block)
-                    requerimentos.append([sigla_prefix, num_part, ano, "", "", classif])
+        num_part, ano = nums_in_block[0].replace(".", "").split("/")
+        numero_ano = f"{num_part}/{ano}"
+
+        # se o número estiver em ignore, mas o bloco for claramente um requerimento real,
+        # ele deve ser mantido
+        if numero_ano in reqs_to_ignore and not bloco_parece_requerimento_real(block):
+            continue
+
+        classif = classify_req(block)
+        requerimentos.append([sigla_prefix, num_part, ano, "", "", classif])
 
         nao_recebidas_header_pattern = re.compile(r"PROPOSIÇÕES\s*NÃO\s*RECEBIDAS", re.IGNORECASE)
         header_match = nao_recebidas_header_pattern.search(self.text)
