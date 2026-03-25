@@ -841,58 +841,183 @@ class LegislativeProcessor:
         return ""
 
     def process_normas(self) -> pd.DataFrame:
-        pattern = re.compile(
-            r"^(LEI COMPLEMENTAR|LEI|RESOLUÇÃO|EMENDA À CONSTITUIÇÃO|DELIBERAÇÃO DA MESA) Nº (\d{1,5}(?:\.\d{0,3})?)(?:/(\d{4}))?(?:, DE .+ DE (\d{4}))?$",
-            re.MULTILINE
-        )
+    pattern = re.compile(
+        r"^(LEI COMPLEMENTAR|LEI|RESOLUÇÃO|EMENDA À CONSTITUIÇÃO|DELIBERAÇÃO DA MESA)\s+N[º°]?\s*(\d{1,5}(?:\.\d{0,3})?)(?:/(\d{4}))?(?:,\s*DE .+? DE (\d{4}))?$",
+        re.MULTILINE | re.IGNORECASE
+    )
 
-        data_na_epigrafe_regex = re.compile(
-            r"\bDE\s+(\d{1,2})\s+DE\s+([A-ZÇÃÁÉÍÓÔÚ]+)\s+DE\s+(\d{4})\b",
-            re.IGNORECASE
-        )
+    data_na_epigrafe_regex = re.compile(
+        r"\bDE\s+(\d{1,2})\s+DE\s+([A-ZÇÃÁÉÍÓÔÚ]+)\s+DE\s+(\d{4})\b",
+        re.IGNORECASE
+    )
 
-        meses_leg = {
-            "JANEIRO": "01",
-            "FEVEREIRO": "02",
-            "MARÇO": "03",
-            "MARCO": "03",
-            "ABRIL": "04",
-            "MAIO": "05",
-            "JUNHO": "06",
-            "JULHO": "07",
-            "AGOSTO": "08",
-            "SETEMBRO": "09",
-            "OUTUBRO": "10",
-            "NOVEMBRO": "11",
-            "DEZEMBRO": "12"
+    meses_leg = {
+        "JANEIRO": "01",
+        "FEVEREIRO": "02",
+        "MARÇO": "03",
+        "MARCO": "03",
+        "ABRIL": "04",
+        "MAIO": "05",
+        "JUNHO": "06",
+        "JULHO": "07",
+        "AGOSTO": "08",
+        "SETEMBRO": "09",
+        "OUTUBRO": "10",
+        "NOVEMBRO": "11",
+        "DEZEMBRO": "12"
+    }
+
+    # gatilhos de alteração
+    gatilho_alteracao_regex = re.compile(
+        r"\b("
+        r"altera|alteram|alterado|alterada|alterados|alteradas|"
+        r"acrescenta|acrescentam|acrescentado|acrescentada|acrescentados|acrescentadas|"
+        r"dá nova redação|dão nova redação|"
+        r"revoga|revogam|revogado|revogada|revogados|revogadas|"
+        r"fica acrescentado|fica acrescentada|ficam acrescentados|ficam acrescentadas|"
+        r"fica alterado|fica alterada|ficam alterados|ficam alteradas|"
+        r"passa a vigorar|passam a vigorar"
+        r")\b",
+        re.IGNORECASE
+    )
+
+    norma_alterada_regex = re.compile(
+        r"\b(LEI COMPLEMENTAR|LEI|RESOLUÇÃO|EMENDA À CONSTITUIÇÃO|DELIBERAÇÃO DA MESA)\s+"
+        r"N[º°]?\s*(\d{1,5}(?:\.\d{0,3})?)"
+        r"(?:\s*/\s*(\d{4}))?"
+        r"(?:,\s*de\s*[^,\n]*?(\d{4}))?",
+        re.IGNORECASE
+    )
+
+    # primeiro, localiza todas as normas publicadas
+    normas_encontradas = []
+    for match in pattern.finditer(self.text):
+        tipo_extenso = match.group(1).upper().strip()
+        numero_raw = match.group(2).replace(".", "")
+        ano = match.group(3) if match.group(3) else match.group(4)
+        if not ano:
+            continue
+
+        pagina = self._pagina_from_pos(match.start())
+        coluna = 1
+
+        sancao = ""
+        linha_epigrafe = match.group(0) or ""
+        dm = data_na_epigrafe_regex.search(linha_epigrafe)
+        if dm:
+            dia = (dm.group(1) or "").zfill(2)
+            mes_nome = (dm.group(2) or "").upper().strip()
+            mes = meses_leg.get(mes_nome, "")
+            ano_data = (dm.group(3) or "").strip()
+            if mes:
+                sancao = f"{dia}/{mes}/{ano_data}"
+
+        sigla = TIPO_MAP_NORMA[tipo_extenso]
+
+        normas_encontradas.append({
+            "start": match.start(),
+            "end": match.end(),
+            "Página": pagina,
+            "Coluna": coluna,
+            "Sanção": sancao,
+            "Sigla": sigla,
+            "Número": numero_raw,
+            "Ano": ano
+        })
+
+    # agora, para cada norma, analisa o bloco até a próxima
+    resultados = []
+
+    for i, norma in enumerate(normas_encontradas):
+        start_bloco = norma["end"]
+        end_bloco = normas_encontradas[i + 1]["start"] if i + 1 < len(normas_encontradas) else len(self.text)
+        bloco = self.text[start_bloco:end_bloco]
+
+        linha = {
+            "Página": norma["Página"],
+            "Coluna": norma["Coluna"],
+            "Sanção": norma["Sanção"],
+            "Sigla": norma["Sigla"],
+            "Número": norma["Número"],
+            "Ano": norma["Ano"],
+            "Alterações": ""
         }
+        resultados.append(linha)
 
-        normas = []
-        for match in pattern.finditer(self.text):
-            tipo_extenso = match.group(1)
-            numero_raw = match.group(2).replace(".", "")
-            ano = match.group(3) if match.group(3) else match.group(4)
-            if not ano:
+        seen_alteracoes = set()
+
+        def add_alteracao(chave: str):
+            if not chave or chave in seen_alteracoes:
+                return
+            seen_alteracoes.add(chave)
+
+            if linha["Alterações"] == "":
+                linha["Alterações"] = chave
+            else:
+                resultados.append({
+                    "Página": "",
+                    "Coluna": "",
+                    "Sanção": "",
+                    "Sigla": "",
+                    "Número": "",
+                    "Ano": "",
+                    "Alterações": chave
+                })
+
+        # só tenta extrair se houver algum verbo típico de alteração no bloco
+        if gatilho_alteracao_regex.search(bloco):
+            for alt in norma_alterada_regex.finditer(bloco):
+                tipo_alt_extenso = alt.group(1).upper().strip()
+                num_alt = alt.group(2).replace(".", "")
+                ano_alt = alt.group(3) or alt.group(4) or ""
+
+                sigla_alt = TIPO_MAP_NORMA.get(tipo_alt_extenso, tipo_alt_extenso)
+
+                # ignora autorreferência
+                if (
+                    sigla_alt == linha["Sigla"]
+                    and num_alt == linha["Número"]
+                    and ((not ano_alt) or ano_alt == linha["Ano"])
+                ):
+                    continue
+
+                chave = f"{sigla_alt} {num_alt}"
+                if ano_alt:
+                    chave += f" {ano_alt}"
+
+                add_alteracao(chave)
+
+        # opcional: reforço para capturar ementa/art. 1º logo no início da norma
+        cabecalho_bloco = bloco[:2000]
+        for alt in norma_alterada_regex.finditer(cabecalho_bloco):
+            tipo_alt_extenso = alt.group(1).upper().strip()
+            num_alt = alt.group(2).replace(".", "")
+            ano_alt = alt.group(3) or alt.group(4) or ""
+
+            sigla_alt = TIPO_MAP_NORMA.get(tipo_alt_extenso, tipo_alt_extenso)
+
+            if (
+                sigla_alt == linha["Sigla"]
+                and num_alt == linha["Número"]
+                and ((not ano_alt) or ano_alt == linha["Ano"])
+            ):
                 continue
 
-            pagina = self._pagina_from_pos(match.start())
-            coluna = 1
+            # só aceita aqui se houver verbo de alteração próximo
+            trecho_local = cabecalho_bloco[max(0, alt.start() - 120): alt.end() + 120]
+            if not gatilho_alteracao_regex.search(trecho_local):
+                continue
 
-            sancao = ""
-            linha_epigrafe = match.group(0) or ""
-            dm = data_na_epigrafe_regex.search(linha_epigrafe)
-            if dm:
-                dia = (dm.group(1) or "").zfill(2)
-                mes_nome = (dm.group(2) or "").upper().strip()
-                mes = meses_leg.get(mes_nome, "")
-                ano_data = (dm.group(3) or "").strip()
-                if mes:
-                    sancao = f"{dia}/{mes}/{ano_data}"
+            chave = f"{sigla_alt} {num_alt}"
+            if ano_alt:
+                chave += f" {ano_alt}"
 
-            sigla = TIPO_MAP_NORMA[tipo_extenso]
-            normas.append([pagina, coluna, sancao, sigla, numero_raw, ano])
+            add_alteracao(chave)
 
-        return pd.DataFrame(normas, columns=["Página", "Coluna", "Sanção", "Sigla", "Número", "Ano"])
+    return pd.DataFrame(
+        resultados,
+        columns=["Página", "Coluna", "Sanção", "Sigla", "Número", "Ano", "Alterações"]
+    )
 
     def process_proposicoes(self) -> pd.DataFrame:
         pattern_prop = re.compile(
@@ -2335,7 +2460,6 @@ def run_app():
                 df_leg_normas = dados_leg["Normas"].copy()
                 if not df_leg_normas.empty:
                     df_leg_normas = df_leg_normas.rename(columns={"Sigla": "Tipo"})
-                    df_leg_normas["Alterações"] = ""
 
                 df_props = dados_leg["Proposicoes"].copy()
                 if not df_props.empty:
