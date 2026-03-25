@@ -1014,10 +1014,10 @@ class LegislativeProcessor:
 
                 add_alteracao(chave)
 
-    return pd.DataFrame(
-        resultados,
-        columns=["Página", "Coluna", "Sanção", "Sigla", "Número", "Ano", "Alterações"]
-    )
+        return pd.DataFrame(
+            resultados,
+            columns=["Página", "Coluna", "Sanção", "Sigla", "Número", "Ano", "Alterações"]
+        )
 
     def process_proposicoes(self) -> pd.DataFrame:
         pattern_prop = re.compile(
