@@ -925,55 +925,77 @@ class LegislativeProcessor:
                 "Ano": ano
             })
 
-    # agora, para cada norma, analisa o bloco até a próxima
-    resultados = []
+        # agora, para cada norma, analisa o bloco até a próxima
+        resultados = []
 
-    for i, norma in enumerate(normas_encontradas):
-        start_bloco = norma["end"]
-        end_bloco = normas_encontradas[i + 1]["start"] if i + 1 < len(normas_encontradas) else len(self.text)
-        bloco = self.text[start_bloco:end_bloco]
+        for i, norma in enumerate(normas_encontradas):
+            start_bloco = norma["end"]
+            end_bloco = normas_encontradas[i + 1]["start"] if i + 1 < len(normas_encontradas) else len(self.text)
+            bloco = self.text[start_bloco:end_bloco]
 
-        linha = {
-            "Página": norma["Página"],
-            "Coluna": norma["Coluna"],
-            "Sanção": norma["Sanção"],
-            "Sigla": norma["Sigla"],
-            "Número": norma["Número"],
-            "Ano": norma["Ano"],
-            "Alterações": ""
-        }
-        resultados.append(linha)
+            linha = {
+                "Página": norma["Página"],
+                "Coluna": norma["Coluna"],
+                "Sanção": norma["Sanção"],
+                "Sigla": norma["Sigla"],
+                "Número": norma["Número"],
+                "Ano": norma["Ano"],
+                "Alterações": ""
+            }
+            resultados.append(linha)
 
-        seen_alteracoes = set()
+            seen_alteracoes = set()
 
-        def add_alteracao(chave: str):
-            if not chave or chave in seen_alteracoes:
-                return
-            seen_alteracoes.add(chave)
+            def add_alteracao(chave: str):
+                if not chave or chave in seen_alteracoes:
+                    return
+                seen_alteracoes.add(chave)
 
-            if linha["Alterações"] == "":
-                linha["Alterações"] = chave
-            else:
-                resultados.append({
-                    "Página": "",
-                    "Coluna": "",
-                    "Sanção": "",
-                    "Sigla": "",
-                    "Número": "",
-                    "Ano": "",
-                    "Alterações": chave
-                })
+                if linha["Alterações"] == "":
+                    linha["Alterações"] = chave
+                else:
+                    resultados.append({
+                        "Página": "",
+                        "Coluna": "",
+                        "Sanção": "",
+                        "Sigla": "",
+                        "Número": "",
+                        "Ano": "",
+                        "Alterações": chave
+                    })
 
-        # só tenta extrair se houver algum verbo típico de alteração no bloco
-        if gatilho_alteracao_regex.search(bloco):
-            for alt in norma_alterada_regex.finditer(bloco):
+            # só tenta extrair se houver algum verbo típico de alteração no bloco
+            if gatilho_alteracao_regex.search(bloco):
+                for alt in norma_alterada_regex.finditer(bloco):
+                    tipo_alt_extenso = alt.group(1).upper().strip()
+                    num_alt = alt.group(2).replace(".", "")
+                    ano_alt = alt.group(3) or alt.group(4) or ""
+
+                    sigla_alt = TIPO_MAP_NORMA.get(tipo_alt_extenso, tipo_alt_extenso)
+
+                    # ignora autorreferência
+                    if (
+                        sigla_alt == linha["Sigla"]
+                        and num_alt == linha["Número"]
+                        and ((not ano_alt) or ano_alt == linha["Ano"])
+                    ):
+                        continue
+
+                    chave = f"{sigla_alt} {num_alt}"
+                    if ano_alt:
+                        chave += f" {ano_alt}"
+
+                    add_alteracao(chave)
+
+            # opcional: reforço para capturar ementa/art. 1º logo no início da norma
+            cabecalho_bloco = bloco[:2000]
+            for alt in norma_alterada_regex.finditer(cabecalho_bloco):
                 tipo_alt_extenso = alt.group(1).upper().strip()
                 num_alt = alt.group(2).replace(".", "")
                 ano_alt = alt.group(3) or alt.group(4) or ""
 
                 sigla_alt = TIPO_MAP_NORMA.get(tipo_alt_extenso, tipo_alt_extenso)
 
-                # ignora autorreferência
                 if (
                     sigla_alt == linha["Sigla"]
                     and num_alt == linha["Número"]
@@ -981,38 +1003,16 @@ class LegislativeProcessor:
                 ):
                     continue
 
+                # só aceita aqui se houver verbo de alteração próximo
+                trecho_local = cabecalho_bloco[max(0, alt.start() - 120): alt.end() + 120]
+                if not gatilho_alteracao_regex.search(trecho_local):
+                    continue
+
                 chave = f"{sigla_alt} {num_alt}"
                 if ano_alt:
                     chave += f" {ano_alt}"
 
                 add_alteracao(chave)
-
-        # opcional: reforço para capturar ementa/art. 1º logo no início da norma
-        cabecalho_bloco = bloco[:2000]
-        for alt in norma_alterada_regex.finditer(cabecalho_bloco):
-            tipo_alt_extenso = alt.group(1).upper().strip()
-            num_alt = alt.group(2).replace(".", "")
-            ano_alt = alt.group(3) or alt.group(4) or ""
-
-            sigla_alt = TIPO_MAP_NORMA.get(tipo_alt_extenso, tipo_alt_extenso)
-
-            if (
-                sigla_alt == linha["Sigla"]
-                and num_alt == linha["Número"]
-                and ((not ano_alt) or ano_alt == linha["Ano"])
-            ):
-                continue
-
-            # só aceita aqui se houver verbo de alteração próximo
-            trecho_local = cabecalho_bloco[max(0, alt.start() - 120): alt.end() + 120]
-            if not gatilho_alteracao_regex.search(trecho_local):
-                continue
-
-            chave = f"{sigla_alt} {num_alt}"
-            if ano_alt:
-                chave += f" {ano_alt}"
-
-            add_alteracao(chave)
 
     return pd.DataFrame(
         resultados,
