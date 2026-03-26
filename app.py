@@ -841,205 +841,205 @@ class LegislativeProcessor:
         return ""
 
     def process_normas(self) -> pd.DataFrame:
-    pattern = re.compile(
-        r"^(LEI COMPLEMENTAR|LEI|RESOLUÇÃO|EMENDA À CONSTITUIÇÃO|DELIBERAÇÃO DA MESA)\s+N[º°]?\s*(\d{1,5}(?:\.\d{0,3})?)(?:/(\d{4}))?(?:,\s*DE .+? DE (\d{4}))?$",
-        re.MULTILINE | re.IGNORECASE
-    )
+        pattern = re.compile(
+            r"^(LEI COMPLEMENTAR|LEI|RESOLUÇÃO|EMENDA À CONSTITUIÇÃO|DELIBERAÇÃO DA MESA)\s+N[º°]?\s*(\d{1,5}(?:\.\d{0,3})?)(?:/(\d{4}))?(?:,\s*DE .+? DE (\d{4}))?$",
+            re.MULTILINE | re.IGNORECASE
+        )
 
-    data_na_epigrafe_regex = re.compile(
-        r"\bDE\s+(\d{1,2})\s+DE\s+([A-ZÇÃÁÉÍÓÔÚ]+)\s+DE\s+(\d{4})\b",
-        re.IGNORECASE
-    )
+        data_na_epigrafe_regex = re.compile(
+            r"\bDE\s+(\d{1,2})\s+DE\s+([A-ZÇÃÁÉÍÓÔÚ]+)\s+DE\s+(\d{4})\b",
+            re.IGNORECASE
+        )
 
-    meses_leg = {
-        "JANEIRO": "01",
-        "FEVEREIRO": "02",
-        "MARÇO": "03",
-        "MARCO": "03",
-        "ABRIL": "04",
-        "MAIO": "05",
-        "JUNHO": "06",
-        "JULHO": "07",
-        "AGOSTO": "08",
-        "SETEMBRO": "09",
-        "OUTUBRO": "10",
-        "NOVEMBRO": "11",
-        "DEZEMBRO": "12"
-    }
-
-    comando_alteracao_regex = re.compile(
-        r"\b("
-        r"altera|alteram|alterado|alterada|alterados|alteradas|"
-        r"acrescenta|acrescentam|acrescentado|acrescentada|acrescentados|acrescentadas|"
-        r"dá nova redação|dão nova redação|"
-        r"revoga|revogam|revogado|revogada|revogados|revogadas|"
-        r"fica acrescentado|fica acrescentada|ficam acrescentados|ficam acrescentadas|"
-        r"fica alterado|fica alterada|ficam alterados|ficam alteradas|"
-        r"passa a vigorar|passam a vigorar"
-        r")\b",
-        re.IGNORECASE
-    )
-
-    norma_alterada_regex = re.compile(
-        r"\b(LEI COMPLEMENTAR|LEI|RESOLUÇÃO|EMENDA À CONSTITUIÇÃO|DELIBERAÇÃO DA MESA)\s+"
-        r"N[º°]?\s*(\d{1,5}(?:\.\d{0,3})?)"
-        r"(?:\s*/\s*(\d{4}))?"
-        r"(?:,\s*de\s*[^,\n]*?(\d{4}))?",
-        re.IGNORECASE
-    )
-
-    # 1) localizar normas publicadas
-    normas_encontradas = []
-    for match in pattern.finditer(self.text):
-        tipo_extenso = match.group(1).upper().strip()
-        numero_raw = match.group(2).replace(".", "")
-        ano = match.group(3) if match.group(3) else match.group(4)
-        if not ano:
-            continue
-
-        pagina = self._pagina_from_pos(match.start())
-        coluna = 1
-
-        sancao = ""
-        linha_epigrafe = match.group(0) or ""
-        dm = data_na_epigrafe_regex.search(linha_epigrafe)
-        if dm:
-            dia = (dm.group(1) or "").zfill(2)
-            mes_nome = (dm.group(2) or "").upper().strip()
-            mes = meses_leg.get(mes_nome, "")
-            ano_data = (dm.group(3) or "").strip()
-            if mes:
-                sancao = f"{dia}/{mes}/{ano_data}"
-
-        sigla = TIPO_MAP_NORMA[tipo_extenso]
-
-        normas_encontradas.append({
-            "start": match.start(),
-            "end": match.end(),
-            "Página": pagina,
-            "Coluna": coluna,
-            "Sanção": sancao,
-            "Sigla": sigla,
-            "Número": numero_raw,
-            "Ano": ano
-        })
-
-    # 2) analisar cada norma publicada
-    resultados = []
-
-    for i, norma in enumerate(normas_encontradas):
-        start_bloco = norma["end"]
-        end_bloco = normas_encontradas[i + 1]["start"] if i + 1 < len(normas_encontradas) else len(self.text)
-        bloco = self.text[start_bloco:end_bloco]
-
-        linha = {
-            "Página": norma["Página"],
-            "Coluna": norma["Coluna"],
-            "Sanção": norma["Sanção"],
-            "Sigla": norma["Sigla"],
-            "Número": norma["Número"],
-            "Ano": norma["Ano"],
-            "Alterações": ""
+        meses_leg = {
+            "JANEIRO": "01",
+            "FEVEREIRO": "02",
+            "MARÇO": "03",
+            "MARCO": "03",
+            "ABRIL": "04",
+            "MAIO": "05",
+            "JUNHO": "06",
+            "JULHO": "07",
+            "AGOSTO": "08",
+            "SETEMBRO": "09",
+            "OUTUBRO": "10",
+            "NOVEMBRO": "11",
+            "DEZEMBRO": "12"
         }
-        resultados.append(linha)
 
-        seen_alteracoes = set()
+        comando_alteracao_regex = re.compile(
+            r"\b("
+            r"altera|alteram|alterado|alterada|alterados|alteradas|"
+            r"acrescenta|acrescentam|acrescentado|acrescentada|acrescentados|acrescentadas|"
+            r"dá nova redação|dão nova redação|"
+            r"revoga|revogam|revogado|revogada|revogados|revogadas|"
+            r"fica acrescentado|fica acrescentada|ficam acrescentados|ficam acrescentadas|"
+            r"fica alterado|fica alterada|ficam alterados|ficam alteradas|"
+            r"passa a vigorar|passam a vigorar"
+            r")\b",
+            re.IGNORECASE
+        )
 
-        def add_alteracao(chave: str):
-            if not chave or chave in seen_alteracoes:
-                return
-            seen_alteracoes.add(chave)
+        norma_alterada_regex = re.compile(
+            r"\b(LEI COMPLEMENTAR|LEI|RESOLUÇÃO|EMENDA À CONSTITUIÇÃO|DELIBERAÇÃO DA MESA)\s+"
+            r"N[º°]?\s*(\d{1,5}(?:\.\d{0,3})?)"
+            r"(?:\s*/\s*(\d{4}))?"
+            r"(?:,\s*de\s*[^,\n]*?(\d{4}))?",
+            re.IGNORECASE
+        )
 
-            if linha["Alterações"] == "":
-                linha["Alterações"] = chave
-            else:
-                resultados.append({
-                    "Página": "",
-                    "Coluna": "",
-                    "Sanção": "",
-                    "Sigla": "",
-                    "Número": "",
-                    "Ano": "",
-                    "Alterações": chave
-                })
-
-        comandos = list(comando_alteracao_regex.finditer(bloco))
-
-        for cmd in comandos:
-            comando_txt = cmd.group(0).lower()
-
-            # janelas diferentes por tipo de comando
-            if "revoga" in comando_txt or "revogad" in comando_txt:
-                antes = 120
-                depois = 1400
-                aceitar_multiplas = True
-            elif "passa a vigorar" in comando_txt or "passam a vigorar" in comando_txt or "nova redação" in comando_txt:
-                antes = 220
-                depois = 900
-                aceitar_multiplas = False
-            else:
-                antes = 180
-                depois = 450
-                aceitar_multiplas = False
-
-            ini = max(0, cmd.start() - antes)
-            fim = min(len(bloco), cmd.end() + depois)
-            janela = bloco[ini:fim]
-            pos_cmd_janela = cmd.start() - ini
-
-            candidatos = []
-
-            for alt in norma_alterada_regex.finditer(janela):
-                tipo_alt_extenso = alt.group(1).upper().strip()
-                num_alt = alt.group(2).replace(".", "")
-                ano_alt = alt.group(3) or alt.group(4) or ""
-
-                sigla_alt = TIPO_MAP_NORMA.get(tipo_alt_extenso, tipo_alt_extenso)
-
-                # ignora autorreferência
-                if (
-                    sigla_alt == linha["Sigla"]
-                    and num_alt == linha["Número"]
-                    and ((not ano_alt) or ano_alt == linha["Ano"])
-                ):
-                    continue
-
-                chave = f"{sigla_alt} {num_alt}"
-                if ano_alt:
-                    chave += f" {ano_alt}"
-
-                # penaliza referências antes do comando
-                if alt.start() >= pos_cmd_janela:
-                    score = alt.start() - pos_cmd_janela
-                else:
-                    score = (pos_cmd_janela - alt.start()) + 250
-
-                candidatos.append((score, alt.start(), chave))
-
-            if not candidatos:
+        # 1) localizar normas publicadas
+        normas_encontradas = []
+        for match in pattern.finditer(self.text):
+            tipo_extenso = match.group(1).upper().strip()
+            numero_raw = match.group(2).replace(".", "")
+            ano = match.group(3) if match.group(3) else match.group(4)
+            if not ano:
                 continue
 
-            candidatos.sort(key=lambda x: (x[0], x[1]))
+            pagina = self._pagina_from_pos(match.start())
+            coluna = 1
 
-            if aceitar_multiplas:
-                # para revogações/listas, aceita todas as normas encontradas na janela
-                for _, _, chave in candidatos:
-                    add_alteracao(chave)
-            else:
-                # para alteração simples, pega a mais próxima
-                melhor_score = candidatos[0][0]
+            sancao = ""
+            linha_epigrafe = match.group(0) or ""
+            dm = data_na_epigrafe_regex.search(linha_epigrafe)
+            if dm:
+                dia = (dm.group(1) or "").zfill(2)
+                mes_nome = (dm.group(2) or "").upper().strip()
+                mes = meses_leg.get(mes_nome, "")
+                ano_data = (dm.group(3) or "").strip()
+                if mes:
+                    sancao = f"{dia}/{mes}/{ano_data}"
 
-                # permite empate técnico de referências muito próximas
-                for score, _, chave in candidatos:
-                    if score <= melhor_score + 80:
-                        add_alteracao(chave)
+            sigla = TIPO_MAP_NORMA[tipo_extenso]
+
+            normas_encontradas.append({
+                "start": match.start(),
+                "end": match.end(),
+                "Página": pagina,
+                "Coluna": coluna,
+                "Sanção": sancao,
+                "Sigla": sigla,
+                "Número": numero_raw,
+                "Ano": ano
+            })
+
+        # 2) analisar cada norma publicada
+        resultados = []
+
+        for i, norma in enumerate(normas_encontradas):
+            start_bloco = norma["end"]
+            end_bloco = normas_encontradas[i + 1]["start"] if i + 1 < len(normas_encontradas) else len(self.text)
+            bloco = self.text[start_bloco:end_bloco]
+
+            linha = {
+                "Página": norma["Página"],
+                "Coluna": norma["Coluna"],
+                "Sanção": norma["Sanção"],
+                "Sigla": norma["Sigla"],
+                "Número": norma["Número"],
+                "Ano": norma["Ano"],
+                "Alterações": ""
+            }
+            resultados.append(linha)
+
+            seen_alteracoes = set()
+
+            def add_alteracao(chave: str):
+                if not chave or chave in seen_alteracoes:
+                    return
+                seen_alteracoes.add(chave)
+
+                if linha["Alterações"] == "":
+                    linha["Alterações"] = chave
+                else:
+                    resultados.append({
+                        "Página": "",
+                        "Coluna": "",
+                        "Sanção": "",
+                        "Sigla": "",
+                        "Número": "",
+                        "Ano": "",
+                        "Alterações": chave
+                    })
+
+            comandos = list(comando_alteracao_regex.finditer(bloco))
+
+            for cmd in comandos:
+                comando_txt = cmd.group(0).lower()
+
+                # janelas diferentes por tipo de comando
+                if "revoga" in comando_txt or "revogad" in comando_txt:
+                    antes = 120
+                    depois = 1400
+                    aceitar_multiplas = True
+                elif "passa a vigorar" in comando_txt or "passam a vigorar" in comando_txt or "nova redação" in comando_txt:
+                    antes = 220
+                    depois = 900
+                    aceitar_multiplas = False
+                else:
+                    antes = 180
+                    depois = 450
+                    aceitar_multiplas = False
+
+                ini = max(0, cmd.start() - antes)
+                fim = min(len(bloco), cmd.end() + depois)
+                janela = bloco[ini:fim]
+                pos_cmd_janela = cmd.start() - ini
+
+                candidatos = []
+
+                for alt in norma_alterada_regex.finditer(janela):
+                    tipo_alt_extenso = alt.group(1).upper().strip()
+                    num_alt = alt.group(2).replace(".", "")
+                    ano_alt = alt.group(3) or alt.group(4) or ""
+
+                    sigla_alt = TIPO_MAP_NORMA.get(tipo_alt_extenso, tipo_alt_extenso)
+
+                    # ignora autorreferência
+                    if (
+                        sigla_alt == linha["Sigla"]
+                        and num_alt == linha["Número"]
+                        and ((not ano_alt) or ano_alt == linha["Ano"])
+                    ):
+                        continue
+
+                    chave = f"{sigla_alt} {num_alt}"
+                    if ano_alt:
+                        chave += f" {ano_alt}"
+
+                    # penaliza referências antes do comando
+                    if alt.start() >= pos_cmd_janela:
+                        score = alt.start() - pos_cmd_janela
                     else:
-                        break
+                        score = (pos_cmd_janela - alt.start()) + 250
 
-    return pd.DataFrame(
-        resultados,
-        columns=["Página", "Coluna", "Sanção", "Sigla", "Número", "Ano", "Alterações"]
-    )
+                    candidatos.append((score, alt.start(), chave))
+
+                if not candidatos:
+                    continue
+
+                candidatos.sort(key=lambda x: (x[0], x[1]))
+
+                if aceitar_multiplas:
+                    # para revogações/listas, aceita todas as normas encontradas na janela
+                    for _, _, chave in candidatos:
+                        add_alteracao(chave)
+                else:
+                    # para alteração simples, pega a mais próxima
+                    melhor_score = candidatos[0][0]
+
+                    # permite empate técnico de referências muito próximas
+                    for score, _, chave in candidatos:
+                        if score <= melhor_score + 80:
+                            add_alteracao(chave)
+                        else:
+                            break
+
+        return pd.DataFrame(
+            resultados,
+            columns=["Página", "Coluna", "Sanção", "Sigla", "Número", "Ano", "Alterações"]
+        )
 
     def process_proposicoes(self) -> pd.DataFrame:
         pattern_prop = re.compile(
@@ -1206,7 +1206,7 @@ class LegislativeProcessor:
             ]
 
             return any(ind in b for ind in indicadores)
-        
+
         rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
         rqc_old_pattern = re.compile(r"^(?:\s*)(nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
 
