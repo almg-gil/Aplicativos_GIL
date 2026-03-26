@@ -2482,7 +2482,7 @@ def run_app():
                 df_leg_normas = dados_leg["Normas"].copy()
                 if not df_leg_normas.empty:
                     df_leg_normas = df_leg_normas.rename(columns={"Sigla": "Tipo"})
-                    df_leg_normas["Alterações"] = ""
+    
 
                 df_props = dados_leg["Proposicoes"].copy()
                 if not df_props.empty:
