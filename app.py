@@ -840,7 +840,7 @@ class LegislativeProcessor:
                 return str(pnum)
         return ""
 
-        def process_normas(self) -> pd.DataFrame:
+    def process_normas(self) -> pd.DataFrame:
         pattern = re.compile(
             r"^(LEI COMPLEMENTAR|LEI|RESOLUÇÃO|EMENDA À CONSTITUIÇÃO|DELIBERAÇÃO DA MESA)\s+N[º°]?\s*(\d{1,5}(?:\.\d{0,3})?)(?:/(\d{4}))?(?:,\s*DE .+? DE (\d{4}))?$",
             re.MULTILINE | re.IGNORECASE
@@ -1193,7 +1193,7 @@ class LegislativeProcessor:
             ]
 
             return any(ind in b for ind in indicadores)
-        
+
         rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
         rqc_old_pattern = re.compile(r"^(?:\s*)(nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
 
@@ -1268,7 +1268,7 @@ class LegislativeProcessor:
             clean_text = clean_text.replace(match.group(0), "")
 
         ignore_edital_emenda_pattern = re.compile(
-            r"e votar,\s*no\s*\d+º\s*turno,\s*o\s*Parecer\s*sobre\s*a\s*Emenda\s*n[º°o]?\s*\d+\s*ao\s*Projeto\s*de\s*Lei(?:\s*Complementar)?\s*n[º°o]?\s*\d{1,4}\.?\d{0,3}/\d{4}.*?e\s*de\s*receber,\s*discutir\s*e\s*votar\s*proposições\s*da\s*comissão",
+            r"e votar,\s*no\s*\d+º\s*turno,\s*o\s*Parecer\s*sobre\s+a\s*Emenda\s*n[º°o]?\s*\d+\s*ao\s*Projeto\s*de\s*Lei(?:\s*Complementar)?\s*n[º°o]?\s*\d{1,4}\.?\d{0,3}/\d{4}.*?e\s*de\s*receber,\s*discutir\s*e\s*votar\s*proposições\s*da\s*comissão",
             re.IGNORECASE | re.DOTALL
         )
 
