@@ -1751,10 +1751,12 @@ class ExecutiveProcessor:
 
                 if tipo_ev == "published":
                     match = match_obj
-                    tipo_raw = match.group(1).strip()
+
+                    tem_asterisco = bool(match.group(1))
+                    tipo_raw = match.group(2).strip()
                     tipo = self.mapa_tipos.get(tipo_raw.upper(), tipo_raw)
-                    numero = match.group(2).replace(" ", "").replace(".", "")
-                    data_texto = (match.group(3) or "").strip()
+                    numero = match.group(3).replace(" ", "").replace(".", "")
+                    data_texto = (match.group(4) or "").strip()
 
                     data_match = re.search(
                         r'(\d{1,2})\s+DE\s+([A-ZÇÃÁÉÍÓÔÚ]+)\s+DE\s+(\d{4})',
