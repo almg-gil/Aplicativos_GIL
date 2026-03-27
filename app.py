@@ -949,9 +949,7 @@ class LegislativeProcessor:
                 "Ano": norma["Ano"],
                 "Alterações": "",
             }
-            dados.append(linha)
-            ultima_norma = linha
-            seen_alteracoes = set()
+    
             resultados.append(linha)
 
             seen_alteracoes = set()
