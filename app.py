@@ -948,7 +948,6 @@ class LegislativeProcessor:
                 "Número": norma["Número"],
                 "Ano": norma["Ano"],
                 "Alterações": "",
-                "Observação": "*Retificação" if tem_asterisco else ""
             }
             dados.append(linha)
             ultima_norma = linha
@@ -1779,7 +1778,8 @@ class ExecutiveProcessor:
                         "Sanção": sancao,
                         "Tipo": tipo,
                         "Número": numero,
-                        "Alterações": ""
+                        "Alterações": "",
+                        "Observação": "*Retificação" if tem_asterisco else ""
                     }
                     dados.append(linha)
                     ultima_norma = linha
