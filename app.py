@@ -634,7 +634,6 @@ def montar_linhas_normas(data_str: str, df: pd.DataFrame, url_diario: str = "") 
             "",
             "",
             "",
-            "",
             r.get("Observação", "")
         ])
     return linhas
