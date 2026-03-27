@@ -634,7 +634,8 @@ def montar_linhas_normas(data_str: str, df: pd.DataFrame, url_diario: str = "") 
             "",
             "",
             "",
-            ""
+            "",
+            r.get("Observação", "")
         ])
     return linhas
 
@@ -946,8 +947,12 @@ class LegislativeProcessor:
                 "Sigla": norma["Sigla"],
                 "Número": norma["Número"],
                 "Ano": norma["Ano"],
-                "Alterações": ""
+                "Alterações": "",
+                "Observação": "*Retificação" if tem_asterisco else ""
             }
+            dados.append(linha)
+            ultima_norma = linha
+            seen_alteracoes = set()
             resultados.append(linha)
 
             seen_alteracoes = set()
@@ -1025,7 +1030,7 @@ class LegislativeProcessor:
 
         return pd.DataFrame(
             resultados,
-            columns=["Página", "Coluna", "Sanção", "Sigla", "Número", "Ano", "Alterações"]
+            columns=["Página", "Coluna", "Sanção", "Sigla", "Número", "Ano", "Alterações", "Observação"]
         )
 
     def process_proposicoes(self) -> pd.DataFrame:
@@ -1658,7 +1663,7 @@ class ExecutiveProcessor:
         }
 
         self.norma_regex = re.compile(
-            r'(?:^|\n|\r|\f)\s*(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]\s*([\d\s\.]+),?\s*DE\s+(.+?)(?:\n|$)',
+            r'(?:^|\n|\r|\f)\s*(\*)?\s*(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]\s*([\d\s\.]+),?\s*DE\s+(.+?)(?:\n|$)',
             re.DOTALL
         )
         self.comandos_regex = re.compile(
@@ -1834,7 +1839,8 @@ class ExecutiveProcessor:
                                 "Sanção": "",
                                 "Tipo": "",
                                 "Número": "",
-                                "Alterações": chave_alt
+                                "Alterações": chave_alt,
+                                "Observação": ""
                             })
 
         return pd.DataFrame(dados) if dados else pd.DataFrame()
