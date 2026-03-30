@@ -1663,7 +1663,14 @@ class ExecutiveProcessor:
             re.DOTALL
         )
         self.comandos_regex = re.compile(
-            r'(Ficam\s+revogados|Fica\s+acrescentado|Ficam\s+alterados|passando\s+o\s+item|passa\s+a\s+vigorar|passam\s+a\s+vigorar)',
+            r"(Ficam\s+revogados|Fica\s+revogado|"
+            r"Fica\s+acrescentad[oa]|Ficam\s+acrescentad[oa]s|"
+            r"Fica\s+alterad[oa]|Ficam\s+alterad[oa]s|"
+            r"Altera|Alteram|"
+            r"Revoga|Revogam|"
+            r"Dá\s+nova\s+redação|Dão\s+nova\s+redação|"
+            r"Passa\s+a\s+vigorar|Passam\s+a\s+vigorar|"
+            r"passando\s+o\s+item)",
             re.IGNORECASE
         )
         self.norma_alterada_regex = re.compile(
@@ -1786,7 +1793,7 @@ class ExecutiveProcessor:
                     if ultima_norma is None:
                         continue
 
-                    raio = 300
+                    raio = 350
                     start_block = max(0, pos_ev - raio)
                     end_block = min(len(texto), pos_ev + raio)
                     bloco = texto[start_block:end_block]
