@@ -1195,12 +1195,24 @@ class LegislativeProcessor:
 
             return any(ind in b for ind in indicadores)
 
+
+        def fecha_parentese_logo_depois(texto: str, start_idx: int, lookahead: int = 80) -> bool:
+            depois = texto[start_idx:start_idx + lookahead]
+            return ")" in depois
+
+
         rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
         rqc_old_pattern = re.compile(r"^(?:\s*)(nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(do|da)", re.MULTILINE)
 
         for pattern, sigla_prefix in [(rqn_pattern, "RQN"), (rqc_old_pattern, "RQC")]:
             for match in pattern.finditer(self.text):
                 start_idx = match.start()
+
+                # ignora citações do tipo:
+                # nº 16.969/2026, da Comissão dos Direitos da Mulher).
+                if fecha_parentese_logo_depois(self.text, start_idx, lookahead=80):
+                    continue
+
                 next_match = re.search(
                     r"^(?:\s*)(Nº|nº)\s+(\d{2}\.?\d{3}/\d{4})",
                     self.text[start_idx + 1:],
