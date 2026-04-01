@@ -1252,41 +1252,41 @@ class LegislativeProcessor:
                     requerimentos.append(["RQN", num_part, ano, "", "", "NÃO RECEBIDO"])
 
         prioridade = {
-    "Voto de congratulações": 100,
-    "Manifestação de pesar": 90,
-    "Manifestação de repúdio": 90,
-    "Moção de aplauso": 90,
-    "Manifestação de apoio": 90,
-    "Aprovado": 50,
-    "Recebido para apreciação": 40,
-    "Recebido": 30,
-    "Prejudicado": 20,
-    "Rejeitado": 10,
-    "NÃO RECEBIDO": 5,
-    "": 0,
-}
+            "Voto de congratulações": 100,
+            "Manifestação de pesar": 90,
+            "Manifestação de repúdio": 90,
+            "Moção de aplauso": 90,
+            "Manifestação de apoio": 90,
+            "Aprovado": 50,
+            "Recebido para apreciação": 50,
+            "Recebido": 50,
+            "Prejudicado": 50,
+            "Rejeitado": 50,
+            "NÃO RECEBIDO": 55,
+            "": 0,
+        }
 
-melhor_por_key = {}
+        melhor_por_key = {}
 
-for r in requerimentos:
-    key = (r[0], r[1], r[2])
-    atual = melhor_por_key.get(key)
+        for r in requerimentos:
+            key = (r[0], r[1], r[2])
+            atual = melhor_por_key.get(key)
 
-    if atual is None:
-        melhor_por_key[key] = r
-    else:
-        classif_nova = r[5] if len(r) > 5 else ""
-        classif_atual = atual[5] if len(atual) > 5 else ""
+            if atual is None:
+                melhor_por_key[key] = r
+            else:
+                classif_nova = r[5] if len(r) > 5 else ""
+                classif_atual = atual[5] if len(atual) > 5 else ""
 
-        if prioridade.get(classif_nova, 0) > prioridade.get(classif_atual, 0):
-            melhor_por_key[key] = r
+                if prioridade.get(classif_nova, 0) > prioridade.get(classif_atual, 0):
+                    melhor_por_key[key] = r
 
-unique_reqs = list(melhor_por_key.values())
+        unique_reqs = list(melhor_por_key.values())
 
-return pd.DataFrame(
-    unique_reqs,
-    columns=["Sigla", "Número", "Ano", "Coluna4", "Coluna5", "Classificação"]
-)
+        return pd.DataFrame(
+            unique_reqs,
+            columns=["Sigla", "Número", "Ano", "Coluna4", "Coluna5", "Classificação"]
+        )
 
     def process_pareceres(self) -> pd.DataFrame:
         found_projects = {}
