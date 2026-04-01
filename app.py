@@ -1158,8 +1158,8 @@ class LegislativeProcessor:
                 requerimentos.append(["RQC", num_part, ano, "", "", "Recebido para apreciação"])
 
         rqc_prejudicado_pattern = re.compile(
-            r"é\s+prejudicado\s+o\s+Requerimento(?: nº| Nº| n\u00ba| n\u00b0)?\s*(\d{1,5}(?:\.\d{0,3})?)/\s*(\d{4})",
-            re.IGNORECASE | re.DOTALL
+            r"(?:é|foi|fica|considera(?:-se)?)(?:[\s\S]{0,80}?)prejudicado\s+o\s+Requerimento(?: nº| Nº| n\u00ba| n\u00b0)?\s*(\d{1,5}(?:\.\d{0,3})?)/\s*(\d{4})",
+            re.IGNORECASE
         )
         for match in rqc_prejudicado_pattern.finditer(self.text):
             num_part = match.group(1).replace(".", "")
