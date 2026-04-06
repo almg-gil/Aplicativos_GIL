@@ -1710,7 +1710,10 @@ class ExecutiveProcessor:
             re.IGNORECASE
         )
         self.norma_alterada_regex = re.compile(
-            r'(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]?\s*([\d\s\./]+)(?:,\s*de\s*(.*?\d{4})?)?',
+            r'(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+'
+            r'N[º°]?\s*([\d\s\.]+?)'
+            r'(?:\s*/\s*(\d{4}))?'
+            r'(?:,\s*de\s*([\s\S]*?\b\d{4}\b))?',
             re.IGNORECASE
         )
 
@@ -1850,14 +1853,14 @@ class ExecutiveProcessor:
                     for alt in alteracoes_para_processar:
                         tipo_alt_raw = alt.group(1).strip()
                         tipo_alt = self.mapa_tipos.get(tipo_alt_raw.upper(), tipo_alt_raw)
-                        num_alt = alt.group(2).replace(" ", "").replace(".", "").replace("/", "")
-                        data_texto_alt = alt.group(3)
-                        ano_alt = ""
-                        if data_texto_alt:
-                            ano_match = re.search(r"(\d{4})", data_texto_alt)
+                        num_alt = alt.group(2).replace(" ", "").replace(".", "")
+                        ano_alt = alt.group(3) or ""
+
+                        if not ano_alt:
+                            data_texto_alt = alt.group(4) or ""
+                            ano_match = re.search(r"\b(\d{4})\b", data_texto_alt)
                             if ano_match:
                                 ano_alt = ano_match.group(1)
-
                         if tipo_alt == "DEC" and num_alt == "48589" and not ano_alt:
                             ano_alt = "2023"
 
