@@ -1761,11 +1761,32 @@ class ExecutiveProcessor:
                     for col_num, (x0, x1) in enumerate([(0, largura / 2), (largura / 2, largura)], start=1):
                         coluna = pagina.crop((x0, 0, x1, altura)).extract_text(layout=True) or ""
                         texto_limpo = coluna.replace("\xa0", " ")
+                        texto_limpo = self._remover_rodape_autenticidade(texto_limpo)
+
                         trechos.append({
                             "pagina": i + 1,
                             "coluna": col_num,
-                            "texto": texto_limpo
+                        "texto": texto_limpo
                         })
+
+                        def _remover_rodape_autenticidade(self, texto: str) -> str:
+                            if not texto:
+                                return texto
+
+                            padroes = [
+                                r'Documento\s+assinado\s+eletronicamente\s+com\s+fundamento\s+no\s+art\.\s*6º\s+do\s+Decreto\s+n[º°]\s*47\.222,\s+de\s+26\s+de\s+julho\s+de\s+2017\.',
+                                r'A\s+autenticidade\s+deste\s+documento\s+pode\s+ser\s+verificada\s+no\s+endereço\s+http://www\.jornalminasgerais\.mg\.gov\.br/Autenticidade,\s+sob\s+o\s+número\s+\d+\.',
+                                r'http://www\.jornalminasgerais\.mg\.gov\.br/Autenticidade',
+                             ]
+
+                            texto_limpo = texto
+                            for padrao in padroes:
+                                texto_limpo = re.sub(padrao, ' ', texto_limpo, flags=re.IGNORECASE)
+
+                            texto_limpo = re.sub(r'[ \t]+', ' ', texto_limpo)
+                            texto_limpo = re.sub(r'\n\s*\n+', '\n', texto_limpo)
+                            return texto_limpo.strip()
+
         except Exception as e:
             st.error(f"Erro ao extrair texto detalhado do PDF do Executivo: {e}")
             return pd.DataFrame()
