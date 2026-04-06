@@ -1710,7 +1710,10 @@ class ExecutiveProcessor:
             re.IGNORECASE
         )
         self.norma_alterada_regex = re.compile(
-            r'(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]?\s*([\d\s\./]+)(?:,\s*de\s*(.*?\d{4})?)?',
+            r'(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+'
+            r'N[º°]?\s*([\d\s\.]+?)'
+            r'(?:\s*/\s*(\d{4}))?'
+            r'(?:,\s*de\s*([\s\S]*?\b\d{4}\b))?',
             re.IGNORECASE
         )
 
