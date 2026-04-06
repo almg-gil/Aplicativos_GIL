@@ -1798,7 +1798,7 @@ class ExecutiveProcessor:
                     data_texto = (match.group(4) or "").strip()
 
                     data_match = re.search(
-                        r'(\d{1,2})\s+DE\s+([A-ZÇÃÁÉÍÓÔÚ]+)\s+DE\s+(\d{4})',
+                        r'(\d{1,2})(?:º)?\s+DE\s+([A-ZÇÃÁÉÍÓÔÚ]+)\s+DE\s+(\d{4})',
                         data_texto,
                         re.IGNORECASE
                     )
