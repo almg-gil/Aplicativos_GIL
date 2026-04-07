@@ -1766,13 +1766,13 @@ class ExecutiveProcessor:
             return None, None
 
     def process_pdf(self) -> pd.DataFrame:
-    start_page_idx, end_page_idx = self.find_relevant_pages()
-    if start_page_idx is None:
-        return pd.DataFrame()
+        start_page_idx, end_page_idx = self.find_relevant_pages()
+        if start_page_idx is None:
+            return pd.DataFrame()
 
-    trechos = []
-    try:
-        with pdfplumber.open(io.BytesIO(self.pdf_bytes)) as pdf:
+        trechos = []
+        try:
+            with pdfplumber.open(io.BytesIO(self.pdf_bytes)) as pdf:
             for i in range(start_page_idx, end_page_idx):
                 pagina = pdf.pages[i]
                 largura, altura = pagina.width, pagina.height
