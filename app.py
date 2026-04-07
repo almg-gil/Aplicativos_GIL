@@ -1732,17 +1732,14 @@ class ExecutiveProcessor:
             return texto
 
         texto_limpo = re.sub(
-            r"Documento\s+assinado\s+eletronicamente\s+com\s+fundamento\s+no\s+art\.\s*6[º°o]?\s+do\s+Decreto\s+n[º°o]?\s*47\.?222\s*,\s*de\s+26\s+de\s+julho\s+de\s+2017\.?",
+            r"Documento\s+assinado\s+eletronicamente\s+com\s+fundamento\s+no\s+art\.\s*6[º°o]?\s+do\s+Decreto\s+n[º°o]?\s*47\.?\s*222\s*,\s*de\s+26\s+de\s+julho\s+de\s+2017\.?",
             " ",
             texto,
             flags=re.IGNORECASE
         )
 
-        # normaliza só espaços horizontais
         texto_limpo = re.sub(r"[ \t]+", " ", texto_limpo)
-
-        # limpa excesso de linhas vazias, mas preserva as quebras normais
-        texto_limpo = re.sub(r"\n[ \t]*\n+", "\n", texto_limpo)
+        texto_limpo = re.sub(r"\n\s*\n+", "\n", texto_limpo)
 
         return texto_limpo.strip()
 
