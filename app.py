@@ -1773,156 +1773,156 @@ class ExecutiveProcessor:
         trechos = []
         try:
             with pdfplumber.open(io.BytesIO(self.pdf_bytes)) as pdf:
-            for i in range(start_page_idx, end_page_idx):
-                pagina = pdf.pages[i]
-                largura, altura = pagina.width, pagina.height
+                for i in range(start_page_idx, end_page_idx):
+                    pagina = pdf.pages[i]
+                    largura, altura = pagina.width, pagina.height
 
-                for col_num, (x0, x1) in enumerate(
-                    [(0, largura / 2), (largura / 2, largura)],
-                    start=1
-                ):
-                    coluna = pagina.crop((x0, 0, x1, altura)).extract_text(layout=True) or ""
-                    texto_limpo = coluna.replace("\xa0", " ")
-                    texto_limpo = self._remover_rodape_autenticidade(texto_limpo)
+                    for col_num, (x0, x1) in enumerate(
+                        [(0, largura / 2), (largura / 2, largura)],
+                        start=1
+                    ):
+                        coluna = pagina.crop((x0, 0, x1, altura)).extract_text(layout=True) or ""
+                        texto_limpo = coluna.replace("\xa0", " ")
+                        texto_limpo = self._remover_rodape_autenticidade(texto_limpo)
 
-                    trechos.append({
-                        "pagina": i + 1,
-                        "coluna": col_num,
-                        "texto": texto_limpo
+                        trechos.append({
+                            "pagina": i + 1,
+                            "coluna": col_num,
+                            "texto": texto_limpo
                     })
 
-    except Exception as e:
-        st.error(f"Erro ao extrair texto detalhado do PDF do Executivo: {e}")
-        return pd.DataFrame()
+        except Exception as e:
+            st.error(f"Erro ao extrair texto detalhado do PDF do Executivo: {e}")
+            return pd.DataFrame()
 
-    dados = []
+        dados = []
 
-    fecho_norma_regex = re.compile(
-        r'Belo\s+Horizonte,\s*\d{1,2}(?:º)?\s+de\s+[A-Za-zçÇãÃáÁéÉíÍóÓôÔúÚ]+\s+de\s+\d{4}.*?Brasil\.',
-        re.IGNORECASE | re.DOTALL
-    )
+        fecho_norma_regex = re.compile(
+            r'Belo\s+Horizonte,\s*\d{1,2}(?:º)?\s+de\s+[A-Za-zçÇãÃáÁéÉíÍóÓôÔúÚ]+\s+de\s+\d{4}.*?Brasil\.',
+            re.IGNORECASE | re.DOTALL
+        )
 
-    for t in trechos:
-        pagina = t["pagina"]
-        coluna = t["coluna"]
-        texto = t["texto"]
+        for t in trechos:
+            pagina = t["pagina"]
+            coluna = t["coluna"]
+            texto = t["texto"]
 
-        normas_publicadas = list(self.norma_regex.finditer(texto))
-        if not normas_publicadas:
-            continue
+            normas_publicadas = list(self.norma_regex.finditer(texto))
+            if not normas_publicadas:
+                continue
 
-        for idx, match in enumerate(normas_publicadas):
-            tem_asterisco = bool(match.group(1))
-            tipo_raw = match.group(2).strip()
-            tipo = self.mapa_tipos.get(tipo_raw.upper(), tipo_raw)
-            numero = match.group(3).replace(" ", "").replace(".", "")
-            data_texto = (match.group(4) or "").strip()
+            for idx, match in enumerate(normas_publicadas):
+                tem_asterisco = bool(match.group(1))
+                tipo_raw = match.group(2).strip()
+                tipo = self.mapa_tipos.get(tipo_raw.upper(), tipo_raw)
+                numero = match.group(3).replace(" ", "").replace(".", "")
+                data_texto = (match.group(4) or "").strip()
 
-            data_match = re.search(
-                r'(\d{1,2})(?:º)?\s+DE\s+([A-ZÇÃÁÉÍÓÔÚ]+)\s+DE\s+(\d{4})',
-                data_texto,
-                re.IGNORECASE
-            )
+                data_match = re.search(
+                    r'(\d{1,2})(?:º)?\s+DE\s+([A-ZÇÃÁÉÍÓÔÚ]+)\s+DE\s+(\d{4})',
+                    data_texto,
+                    re.IGNORECASE
+                )
 
-            if data_match:
-                dia = data_match.group(1).zfill(2)
-                mes_nome = data_match.group(2).upper()
-                mes = meses.get(mes_nome, "")
-                ano = data_match.group(3)
-                sancao = f"{dia}/{mes}/{ano}" if mes else ""
-            else:
-                sancao = ""
-
-            linha = {
-                "Página": pagina,
-                "Coluna": coluna,
-                "Sanção": sancao,
-                "Tipo": tipo,
-                "Número": numero,
-                "Alterações": "",
-                "Observação": "*Retificação" if tem_asterisco else ""
-            }
-            dados.append(linha)
-
-            inicio_bloco = match.end()
-            fim_bloco = (
-                normas_publicadas[idx + 1].start()
-                if idx + 1 < len(normas_publicadas)
-                else len(texto)
-            )
-            bloco_norma = texto[inicio_bloco:fim_bloco]
-
-            m_fecho = fecho_norma_regex.search(bloco_norma)
-            if m_fecho:
-                bloco_norma = bloco_norma[:m_fecho.end()]
-
-            seen_alteracoes = set()
-
-            for c in self.comandos_regex.finditer(bloco_norma):
-                command_text = c.group(0).lower()
-
-                raio = 350
-                start_block = max(0, c.start() - raio)
-                end_block = min(len(bloco_norma), c.end() + raio)
-                janela = bloco_norma[start_block:end_block]
-                janela = self._remover_rodape_autenticidade(janela)
-
-                alteracoes_para_processar = []
-
-                if "revoga" in command_text or "revogado" in command_text:
-                    alteracoes_para_processar = list(self.norma_alterada_regex.finditer(janela))
+                if data_match:
+                    dia = data_match.group(1).zfill(2)
+                    mes_nome = data_match.group(2).upper()
+                    mes = meses.get(mes_nome, "")
+                    ano = data_match.group(3)
+                    sancao = f"{dia}/{mes}/{ano}" if mes else ""
                 else:
-                    alteracoes_candidatas = list(self.norma_alterada_regex.finditer(janela))
-                    if alteracoes_candidatas:
-                        pos_comando_na_janela = c.start() - start_block
-                        melhor_candidato = min(
-                            alteracoes_candidatas,
-                            key=lambda m: abs(m.start() - pos_comando_na_janela)
-                        )
-                        alteracoes_para_processar = [melhor_candidato]
+                    sancao = ""
 
-                for alt in alteracoes_para_processar:
-                    tipo_alt_raw = alt.group(1).strip()
-                    tipo_alt = self.mapa_tipos.get(tipo_alt_raw.upper(), tipo_alt_raw)
+                linha = {
+                    "Página": pagina,
+                    "Coluna": coluna,
+                    "Sanção": sancao,
+                    "Tipo": tipo,
+                    "Número": numero,
+                    "Alterações": "",
+                    "Observação": "*Retificação" if tem_asterisco else ""
+                }
+                dados.append(linha)
 
-                    num_alt_bruto = alt.group(2) or ""
-                    num_alt = re.sub(r"[^\d]", "", num_alt_bruto)
+                inicio_bloco = match.end()
+                fim_bloco = (
+                    normas_publicadas[idx + 1].start()
+                    if idx + 1 < len(normas_publicadas)
+                    else len(texto)
+                )
+                bloco_norma = texto[inicio_bloco:fim_bloco]
 
-                    ano_alt = (alt.group(3) or "").strip()
-                    if not ano_alt:
-                        data_texto_alt = alt.group(4) or ""
-                        ano_match = re.search(r"\b(\d{4})\b", data_texto_alt)
-                        if ano_match:
-                            ano_alt = ano_match.group(1)
+                m_fecho = fecho_norma_regex.search(bloco_norma)
+                if m_fecho:
+                    bloco_norma = bloco_norma[:m_fecho.end()]
 
-                    if tipo_alt == "DEC" and num_alt == "48589" and not ano_alt:
-                        ano_alt = "2023"
+                seen_alteracoes = set()
 
-                    chave_alt = f"{tipo_alt} {num_alt}"
-                    if ano_alt:
-                        chave_alt += f" {ano_alt}"
+                for c in self.comandos_regex.finditer(bloco_norma):
+                    command_text = c.group(0).lower()
 
-                    if tipo_alt == linha["Tipo"] and num_alt == linha["Número"]:
-                        continue
-                    if chave_alt in seen_alteracoes:
-                        continue
+                    raio = 350
+                    start_block = max(0, c.start() - raio)
+                    end_block = min(len(bloco_norma), c.end() + raio)
+                    janela = bloco_norma[start_block:end_block]
+                    janela = self._remover_rodape_autenticidade(janela)
 
-                    seen_alteracoes.add(chave_alt)
+                    alteracoes_para_processar = []
 
-                    if linha["Alterações"] == "":
-                        linha["Alterações"] = chave_alt
+                    if "revoga" in command_text or "revogado" in command_text:
+                        alteracoes_para_processar = list(self.norma_alterada_regex.finditer(janela))
                     else:
-                        dados.append({
-                            "Página": "",
-                            "Coluna": "",
-                            "Sanção": "",
-                            "Tipo": "",
-                            "Número": "",
-                            "Alterações": chave_alt,
-                            "Observação": ""
-                        })
+                        alteracoes_candidatas = list(self.norma_alterada_regex.finditer(janela))
+                        if alteracoes_candidatas:
+                            pos_comando_na_janela = c.start() - start_block
+                            melhor_candidato = min(
+                                alteracoes_candidatas,
+                                key=lambda m: abs(m.start() - pos_comando_na_janela)
+                            )
+                            alteracoes_para_processar = [melhor_candidato]
 
-    return pd.DataFrame(dados) if dados else pd.DataFrame()
+                    for alt in alteracoes_para_processar:
+                        tipo_alt_raw = alt.group(1).strip()
+                        tipo_alt = self.mapa_tipos.get(tipo_alt_raw.upper(), tipo_alt_raw)
+
+                        num_alt_bruto = alt.group(2) or ""
+                        num_alt = re.sub(r"[^\d]", "", num_alt_bruto)
+
+                        ano_alt = (alt.group(3) or "").strip()
+                        if not ano_alt:
+                            data_texto_alt = alt.group(4) or ""
+                            ano_match = re.search(r"\b(\d{4})\b", data_texto_alt)
+                            if ano_match:
+                                ano_alt = ano_match.group(1)
+
+                        if tipo_alt == "DEC" and num_alt == "48589" and not ano_alt:
+                            ano_alt = "2023"
+
+                        chave_alt = f"{tipo_alt} {num_alt}"
+                        if ano_alt:
+                            chave_alt += f" {ano_alt}"
+
+                        if tipo_alt == linha["Tipo"] and num_alt == linha["Número"]:
+                            continue
+                        if chave_alt in seen_alteracoes:
+                            continue
+
+                        seen_alteracoes.add(chave_alt)
+
+                        if linha["Alterações"] == "":
+                            linha["Alterações"] = chave_alt
+                        else:
+                            dados.append({
+                                "Página": "",
+                                "Coluna": "",
+                                "Sanção": "",
+                                "Tipo": "",
+                                "Número": "",
+                                "Alterações": chave_alt,
+                                "Observação": ""
+                            })
+
+        return pd.DataFrame(dados) if dados else pd.DataFrame()
 
 # =========================
 # FUNÇÕES PARA GERADOR DE LINKS
