@@ -1774,9 +1774,9 @@ class ExecutiveProcessor:
             return None, None
 
     def process_pdf(self) -> pd.DataFrame:
-    start_page_idx, end_page_idx = self.find_relevant_pages()
-    if start_page_idx is None:
-        return pd.DataFrame()
+        start_page_idx, end_page_idx = self.find_relevant_pages()
+        if start_page_idx is None:
+            return pd.DataFrame()
 
     trechos = []
     try:
