@@ -987,8 +987,6 @@ class LegislativeProcessor:
                     end_block = min(len(bloco), pos_ev + raio)
                     bloco_janela = bloco[start_block:end_block]
 
-                    janela = self._remover_rodape_autenticidade(janela)
-
                     alteracoes_para_processar = []
 
                     if "revoga" in command_text or "revogado" in command_text:
@@ -1730,28 +1728,22 @@ class ExecutiveProcessor:
             return dirty_bytes
 
     def _remover_rodape_autenticidade(self, texto: str) -> str:
-        if not texto:
-            return texto
+                            if not texto:
+                                return texto
 
-        texto_limpo = re.sub(
-            r'Documento\s+assinado\s+eletronicamente.*?'
-            r'A\s+autenticidade\s+deste\s+documento\s+pode\s+ser\s+verificada.*?'
-            r'(?:sob\s+o\s+número\s+\d+\.)?',
-            ' ',
-            texto,
-            flags=re.IGNORECASE | re.DOTALL
-        )
+                            padroes = [
+                                r'Documento\s+assinado\s+eletronicamente\s+com\s+fundamento\s+no\s+art\.\s*6º\s+do\s+Decreto\s+n[º°]\s*47\.222,\s+de\s+26\s+de\s+julho\s+de\s+2017\.',
+                                r'A\s+autenticidade\s+deste\s+documento\s+pode\s+ser\s+verificada\s+no\s+endereço\s+http://www\.jornalminasgerais\.mg\.gov\.br/Autenticidade,\s+sob\s+o\s+número\s+\d+\.',
+                                r'http://www\.jornalminasgerais\.mg\.gov\.br/Autenticidade',
+                             ]
 
-        texto_limpo = re.sub(
-            r'http://www\.jornalminasgerais\.mg\.gov\.br/Autenticidade',
-            ' ',
-            texto_limpo,
-            flags=re.IGNORECASE
-        )
+                            texto_limpo = texto
+                            for padrao in padroes:
+                                texto_limpo = re.sub(padrao, ' ', texto_limpo, flags=re.IGNORECASE)
 
-        texto_limpo = re.sub(r'[ \t]+', ' ', texto_limpo)
-        texto_limpo = re.sub(r'\n\s*\n+', '\n', texto_limpo)
-        return texto_limpo.strip()
+                            texto_limpo = re.sub(r'[ \t]+', ' ', texto_limpo)
+                            texto_limpo = re.sub(r'\n\s*\n+', '\n', texto_limpo)
+                            return texto_limpo.strip()
 
     def find_relevant_pages(self) -> tuple:
         try:
@@ -1774,9 +1766,9 @@ class ExecutiveProcessor:
             return None, None
 
     def process_pdf(self) -> pd.DataFrame:
-        start_page_idx, end_page_idx = self.find_relevant_pages()
-        if start_page_idx is None:
-            return pd.DataFrame()
+    start_page_idx, end_page_idx = self.find_relevant_pages()
+    if start_page_idx is None:
+        return pd.DataFrame()
 
     trechos = []
     try:
@@ -1785,7 +1777,10 @@ class ExecutiveProcessor:
                 pagina = pdf.pages[i]
                 largura, altura = pagina.width, pagina.height
 
-                for col_num, (x0, x1) in enumerate([(0, largura / 2), (largura / 2, largura)], start=1):
+                for col_num, (x0, x1) in enumerate(
+                    [(0, largura / 2), (largura / 2, largura)],
+                    start=1
+                ):
                     coluna = pagina.crop((x0, 0, x1, altura)).extract_text(layout=True) or ""
                     texto_limpo = coluna.replace("\xa0", " ")
                     texto_limpo = self._remover_rodape_autenticidade(texto_limpo)
@@ -1850,7 +1845,11 @@ class ExecutiveProcessor:
             dados.append(linha)
 
             inicio_bloco = match.end()
-            fim_bloco = normas_publicadas[idx + 1].start() if idx + 1 < len(normas_publicadas) else len(texto)
+            fim_bloco = (
+                normas_publicadas[idx + 1].start()
+                if idx + 1 < len(normas_publicadas)
+                else len(texto)
+            )
             bloco_norma = texto[inicio_bloco:fim_bloco]
 
             m_fecho = fecho_norma_regex.search(bloco_norma)
@@ -1866,6 +1865,7 @@ class ExecutiveProcessor:
                 start_block = max(0, c.start() - raio)
                 end_block = min(len(bloco_norma), c.end() + raio)
                 janela = bloco_norma[start_block:end_block]
+                janela = self._remover_rodape_autenticidade(janela)
 
                 alteracoes_para_processar = []
 
@@ -1923,6 +1923,7 @@ class ExecutiveProcessor:
                         })
 
     return pd.DataFrame(dados) if dados else pd.DataFrame()
+
 # =========================
 # FUNÇÕES PARA GERADOR DE LINKS
 # =========================
