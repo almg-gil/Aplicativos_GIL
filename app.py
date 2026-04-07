@@ -1727,24 +1727,24 @@ class ExecutiveProcessor:
         except ValueError:
             return dirty_bytes
 
-def _remover_rodape_autenticidade(self, texto: str) -> str:
-    if not texto:
-        return texto
+    def _remover_rodape_autenticidade(self, texto: str) -> str:
+        if not texto:
+            return texto
 
-    texto_limpo = re.sub(
-        r"Documento\s+assinado\s+eletronicamente\s+com\s+fundamento\s+no\s+art\.\s*6[º°o]?\s+do\s+Decreto\s+n[º°o]?\s*47\.?222\s*,\s*de\s+26\s+de\s+julho\s+de\s+2017\.?",
-        " ",
-        texto,
-        flags=re.IGNORECASE
-    )
+        texto_limpo = re.sub(
+            r"Documento\s+assinado\s+eletronicamente\s+com\s+fundamento\s+no\s+art\.\s*6[º°o]?\s+do\s+Decreto\s+n[º°o]?\s*47\.?222\s*,\s*de\s+26\s+de\s+julho\s+de\s+2017\.?",
+            " ",
+            texto,
+            flags=re.IGNORECASE
+        )
 
-    # normaliza só espaços horizontais
-    texto_limpo = re.sub(r"[ \t]+", " ", texto_limpo)
+        # normaliza só espaços horizontais
+        texto_limpo = re.sub(r"[ \t]+", " ", texto_limpo)
 
-    # limpa excesso de linhas vazias, mas preserva as quebras normais
-    texto_limpo = re.sub(r"\n[ \t]*\n+", "\n", texto_limpo)
+        # limpa excesso de linhas vazias, mas preserva as quebras normais
+        texto_limpo = re.sub(r"\n[ \t]*\n+", "\n", texto_limpo)
 
-    return texto_limpo.strip()
+        return texto_limpo.strip()
 
     def find_relevant_pages(self) -> tuple:
         try:
