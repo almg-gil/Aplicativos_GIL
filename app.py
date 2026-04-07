@@ -987,6 +987,8 @@ class LegislativeProcessor:
                     end_block = min(len(bloco), pos_ev + raio)
                     bloco_janela = bloco[start_block:end_block]
 
+                    janela = self._remover_rodape_autenticidade(janela)
+
                     alteracoes_para_processar = []
 
                     if "revoga" in command_text or "revogado" in command_text:
@@ -1728,22 +1730,28 @@ class ExecutiveProcessor:
             return dirty_bytes
 
     def _remover_rodape_autenticidade(self, texto: str) -> str:
-                            if not texto:
-                                return texto
+        if not texto:
+            return texto
 
-                            padroes = [
-                                r'Documento\s+assinado\s+eletronicamente\s+com\s+fundamento\s+no\s+art\.\s*6º\s+do\s+Decreto\s+n[º°]\s*47\.222,\s+de\s+26\s+de\s+julho\s+de\s+2017\.',
-                                r'A\s+autenticidade\s+deste\s+documento\s+pode\s+ser\s+verificada\s+no\s+endereço\s+http://www\.jornalminasgerais\.mg\.gov\.br/Autenticidade,\s+sob\s+o\s+número\s+\d+\.',
-                                r'http://www\.jornalminasgerais\.mg\.gov\.br/Autenticidade',
-                             ]
+        texto_limpo = re.sub(
+            r'Documento\s+assinado\s+eletronicamente.*?'
+            r'A\s+autenticidade\s+deste\s+documento\s+pode\s+ser\s+verificada.*?'
+            r'(?:sob\s+o\s+número\s+\d+\.)?',
+            ' ',
+            texto,
+            flags=re.IGNORECASE | re.DOTALL
+        )
 
-                            texto_limpo = texto
-                            for padrao in padroes:
-                                texto_limpo = re.sub(padrao, ' ', texto_limpo, flags=re.IGNORECASE)
+        texto_limpo = re.sub(
+            r'http://www\.jornalminasgerais\.mg\.gov\.br/Autenticidade',
+            ' ',
+            texto_limpo,
+            flags=re.IGNORECASE
+        )
 
-                            texto_limpo = re.sub(r'[ \t]+', ' ', texto_limpo)
-                            texto_limpo = re.sub(r'\n\s*\n+', '\n', texto_limpo)
-                            return texto_limpo.strip()
+        texto_limpo = re.sub(r'[ \t]+', ' ', texto_limpo)
+        texto_limpo = re.sub(r'\n\s*\n+', '\n', texto_limpo)
+        return texto_limpo.strip()
 
     def find_relevant_pages(self) -> tuple:
         try:
