@@ -1731,15 +1731,21 @@ class ExecutiveProcessor:
         if not texto:
             return texto
 
+        padrao_rodape = (
+            r"Documento\s+assinado\s+eletronicamente\s+com\s+fundamento\s+no\s+"
+            r"art\.?\s*6[º°o]?\s+do\s+Decreto\s+n[º°o]?\s*47\.?\s*222\s*,\s*"
+            r"de\s+26\s+de\s+julho\s+de\s+2017\.?"
+        )
+
         texto_limpo = re.sub(
-            r"Documento\s+assinado\s+eletronicamente\s+com\s+fundamento\s+no\s+art\.\s*6[º°o]?\s+do\s+Decreto\s+n[º°o]?\s*47\.?\s*222\s*,\s*de\s+26\s+de\s+julho\s+de\s+2017\.?",
+            padrao_rodape,
             " ",
             texto,
             flags=re.IGNORECASE
         )
 
         texto_limpo = re.sub(r"[ \t]+", " ", texto_limpo)
-        texto_limpo = re.sub(r"\n\s*\n+", "\n", texto_limpo)
+        texto_limpo = re.sub(r"\n[ \t]*\n+", "\n", texto_limpo)
 
         return texto_limpo.strip()
 
@@ -1877,6 +1883,17 @@ class ExecutiveProcessor:
                         num_alt = re.sub(r"[^\d]", "", num_alt_bruto)
 
                         ano_alt = (alt.group(3) or "").strip()
+
+                        contexto_expandido = bloco[max(0, alt.start() - 250): min(len(bloco), alt.end() + 250)]
+
+                        if re.search(
+                         r"Documento\s+assinado\s+eletronicamente\s+com\s+fundamento\s+no\s+"
+                            r"art\.?\s*6[º°o]?\s+do\s+Decreto\s+n[º°o]?\s*47\.?\s*222\s*,\s*"
+                            r"de\s+26\s+de\s+julho\s+de\s+2017\.?",
+                             contexto_expandido,
+                            flags=re.IGNORECASE
+                        ):
+                            continue
 
                         if not ano_alt:
                             data_texto_alt = alt.group(4) or ""
