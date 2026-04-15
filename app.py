@@ -110,48 +110,63 @@ PADRAO_AFASTAMENTO = re.compile(r"^\s*(licen[cç]a|f[eé]rias)\s*[:\-]\s*(.+?)\s
 
 GRUPOS_EQUIPE = {
     "BIBLIOTECARIO": ["TIAGO", "PAULO", "CIRLENE", "SILVANA", "ROBSON", "MARCIA"],
+    "BIBLIOTECARIO_TARDE": ["ROBSON", "SILVANA"],
+    "BIBLIOTECARIO_EXEC": ["TIAGO", "PAULO", "CIRLENE", "MARCIA"],
     "ESTAGIARIO": ["ISABELA", "NÉLIA"],
     "TECNICO": ["ISADORA", "CLÉLIA"],
 }
 
 REGRAS_TAREFA = {
-    "normas_execucao": {
+    "implantacao_normas_dne": {
         "grupos": ["ESTAGIARIO", "TECNICO"],
         "excluir": ["CLÉLIA"],
     },
-    "normas_revisao": {
+    "implantacao_normas_nao_dne": {
+        "grupos": ["ESTAGIARIO", "TECNICO", "BIBLIOTECARIO_EXEC"],
+        "excluir": ["PAULO", "MARCIA"],
+    },
+    "revisao_normas": {
         "grupos": ["BIBLIOTECARIO"],
     },
-    "proposicoes_execucao": {
-        "grupos": ["ESTAGIARIO", "TECNICO"],
-    },
-    "proposicoes_revisao": {
-        "grupos": ["BIBLIOTECARIO"],
-    },
-    "requerimentos_execucao": {
-        "grupos": ["ESTAGIARIO", "TECNICO"],
-    },
-    "requerimentos_revisao": {
-        "grupos": ["BIBLIOTECARIO"],
-    },
-    "pareceres_execucao": {
-        "grupos": ["ESTAGIARIO", "TECNICO"],
+
+    "execucao_proposicoes_nao_up": {
+        "grupos": ["BIBLIOTECARIO_EXEC", "ESTAGIARIO", "TECNICO"],
         "excluir": ["CLÉLIA"],
     },
-    "pareceres_revisao": {
+    "execucao_proposicoes_up": {
+        "incluir": ["CLÉLIA", "ISADORA"],
+    },
+    "revisao_proposicoes": {
+        "grupos": ["BIBLIOTECARIO"],
+    },
+
+    "execucao_requerimentos": {
+        "grupos": ["BIBLIOTECARIO_EXEC", "ESTAGIARIO", "TECNICO"],
+    },
+    "revisao_requerimentos": {
+        "grupos": ["BIBLIOTECARIO"],
+    },
+
+    "execucao_pareceres": {
+        "grupos": ["BIBLIOTECARIO_EXEC", "ESTAGIARIO", "TECNICO"],
+        "excluir": ["CLÉLIA"],
+    },
+    "revisao_pareceres": {
         "grupos": ["BIBLIOTECARIO"],
     },
 }
 
 ROTULOS_TAREFA = {
-    "normas_execucao": "Normas - execução",
-    "normas_revisao": "Normas - revisão",
-    "proposicoes_execucao": "Proposições - indexação",
-    "proposicoes_revisao": "Proposições - revisão",
-    "requerimentos_execucao": "Requerimentos - indexação",
-    "requerimentos_revisao": "Requerimentos - revisão",
-    "pareceres_execucao": "Pareceres - indexação",
-    "pareceres_revisao": "Pareceres - revisão",
+    "implantacao_normas_dne": "Implantação de normas DNE",
+    "implantacao_normas_nao_dne": "Implantação de normas não DNE",
+    "revisao_normas": "Revisão de normas",
+    "execucao_proposicoes_nao_up": "Execução de proposições não UP",
+    "execucao_proposicoes_up": "Execução de proposições UP",
+    "revisao_proposicoes": "Revisão de proposições",
+    "execucao_requerimentos": "Execução de requerimentos",
+    "revisao_requerimentos": "Revisão de requerimentos",
+    "execucao_pareceres": "Execução de pareceres",
+    "revisao_pareceres": "Revisão de pareceres",
 }
 
 
@@ -332,6 +347,39 @@ def candidatos_para_tarefa(chave_tarefa: str, indisponiveis: set[str] | None = N
 
     return candidatos
 
+def pessoa_pertence_ao_grupo(nome: str, grupo: str) -> bool:
+    nome_fmt = nome_planilha(nome)
+    return nome_fmt in {nome_planilha(p) for p in GRUPOS_EQUIPE.get(grupo, [])}
+
+
+def inicializar_df_responsaveis(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None:
+        return pd.DataFrame()
+
+    df = df.copy()
+
+    if "ResponsavelExecucao" not in df.columns:
+        df["ResponsavelExecucao"] = ""
+
+    if "ResponsavelRevisao" not in df.columns:
+        df["ResponsavelRevisao"] = ""
+
+    return df
+
+
+def distribuir_para_posicoes(total_linhas: int, posicoes: list[int], pessoas: list[str]) -> dict[int, str]:
+    distribuicao = distribuir_em_blocos(len(posicoes), pessoas)
+    return {pos: nome for pos, nome in zip(posicoes, distribuicao)}
+
+
+def eh_norma_dne(r: pd.Series) -> bool:
+    return nome_planilha(r.get("Tipo", "")) == "DNE"
+
+
+def eh_proposicao_up(r: pd.Series) -> bool:
+    valor = r.get("Observação", r.get("Categoria", ""))
+    return nome_planilha(valor) == "UP"
+
 
 class DistribuidorRoundRobin:
     def __init__(self):
@@ -456,10 +504,10 @@ def distribuir_tarefas_extraidas_em_blocos(
 
 def validar_pools_distribuicao(indisponiveis: set[str] | None = None) -> list[str]:
     avisos = []
-    for chave in REGRAS_TAREFA:
+    for chave, rotulo in ROTULOS_TAREFA.items():
         candidatos = candidatos_para_tarefa(chave, indisponiveis)
         if not candidatos:
-            avisos.append(f"Sem pessoas disponíveis para {ROTULOS_TAREFA.get(chave, chave)}.")
+            avisos.append(f"Sem pessoas disponíveis para {rotulo}.")
     return avisos
 
 
@@ -1165,61 +1213,146 @@ def distribuir_em_blocos(qtd: int, pessoas: list[str]) -> list[str]:
     return resultado
 
 
-def atribuir_responsaveis_em_blocos(
+def atribuir_responsaveis_normas(
     df: pd.DataFrame,
-    chave_execucao: str = "",
-    chave_revisao: str = "",
     indisponiveis: set[str] | None = None,
-    replicar_em_linhas_continuacao: bool = False,
+    replicar_em_linhas_continuacao: bool = True,
 ) -> pd.DataFrame:
-    if df is None:
-        return pd.DataFrame()
-
-    df = df.copy()
-
+    df = inicializar_df_responsaveis(df)
     if df.empty:
-        df["ResponsavelExecucao"] = ""
-        df["ResponsavelRevisao"] = ""
         return df
 
-    candidatos_exec = candidatos_para_tarefa(chave_execucao, indisponiveis) if chave_execucao else []
-    candidatos_rev = candidatos_para_tarefa(chave_revisao, indisponiveis) if chave_revisao else []
+    cand_exec_dne = candidatos_para_tarefa("implantacao_normas_dne", indisponiveis)
+    cand_exec_nao_dne = candidatos_para_tarefa("implantacao_normas_nao_dne", indisponiveis)
+    cand_rev = candidatos_para_tarefa("revisao_normas", indisponiveis)
 
-    if replicar_em_linhas_continuacao:
-        mascara_cont = []
-        qtd_principais = 0
+    mascara_cont = []
+    pos_principais = []
+    pos_dne = []
+    pos_nao_dne = []
 
-        for _, r in df.iterrows():
-            cont = linha_continuacao_norma(r)
-            mascara_cont.append(cont)
-            if not cont:
-                qtd_principais += 1
+    for pos, (_, r) in enumerate(df.iterrows()):
+        cont = replicar_em_linhas_continuacao and linha_continuacao_norma(r)
+        mascara_cont.append(cont)
 
-        exec_principais = distribuir_em_blocos(qtd_principais, candidatos_exec)
-        rev_principais = distribuir_em_blocos(qtd_principais, candidatos_rev)
+        if cont:
+            continue
 
-        execucoes = []
-        revisoes = []
-        idx_principal = 0
-        ultimo_exec = ""
-        ultimo_rev = ""
+        pos_principais.append(pos)
+        if eh_norma_dne(r):
+            pos_dne.append(pos)
+        else:
+            pos_nao_dne.append(pos)
 
-        for cont in mascara_cont:
-            if cont:
-                execucoes.append(ultimo_exec)
-                revisoes.append(ultimo_rev)
-            else:
-                ultimo_exec = exec_principais[idx_principal] if idx_principal < len(exec_principais) else ""
-                ultimo_rev = rev_principais[idx_principal] if idx_principal < len(rev_principais) else ""
-                execucoes.append(ultimo_exec)
-                revisoes.append(ultimo_rev)
-                idx_principal += 1
-    else:
-        execucoes = distribuir_em_blocos(len(df), candidatos_exec)
-        revisoes = distribuir_em_blocos(len(df), candidatos_rev)
+    mapa_exec_dne = distribuir_para_posicoes(len(df), pos_dne, cand_exec_dne)
+    mapa_exec_nao_dne = distribuir_para_posicoes(len(df), pos_nao_dne, cand_exec_nao_dne)
+    mapa_rev = distribuir_para_posicoes(len(df), pos_principais, cand_rev)
+
+    execucoes = []
+    revisoes = []
+    ultimo_exec = ""
+    ultimo_rev = ""
+
+    for pos, cont in enumerate(mascara_cont):
+        if cont:
+            execucoes.append(ultimo_exec)
+            revisoes.append(ultimo_rev)
+            continue
+
+        ultimo_exec = mapa_exec_dne.get(pos, mapa_exec_nao_dne.get(pos, ""))
+        ultimo_rev = mapa_rev.get(pos, "")
+
+        execucoes.append(ultimo_exec)
+        revisoes.append(ultimo_rev)
 
     df["ResponsavelExecucao"] = execucoes
     df["ResponsavelRevisao"] = revisoes
+    return df
+
+
+def atribuir_responsaveis_proposicoes(
+    df: pd.DataFrame,
+    indisponiveis: set[str] | None = None,
+) -> pd.DataFrame:
+    df = inicializar_df_responsaveis(df)
+    if df.empty:
+        return df
+
+    cand_exec_up = candidatos_para_tarefa("execucao_proposicoes_up", indisponiveis)
+    cand_exec_nao_up = candidatos_para_tarefa("execucao_proposicoes_nao_up", indisponiveis)
+    cand_rev = candidatos_para_tarefa("revisao_proposicoes", indisponiveis)
+
+    pos_up = []
+    pos_nao_up = []
+    pos_todas = list(range(len(df)))
+
+    for pos, (_, r) in enumerate(df.iterrows()):
+        if eh_proposicao_up(r):
+            pos_up.append(pos)
+        else:
+            pos_nao_up.append(pos)
+
+    mapa_exec_up = distribuir_para_posicoes(len(df), pos_up, cand_exec_up)
+    mapa_exec_nao_up = distribuir_para_posicoes(len(df), pos_nao_up, cand_exec_nao_up)
+    mapa_rev = distribuir_para_posicoes(len(df), pos_todas, cand_rev)
+
+    execucoes = []
+    revisoes = []
+
+    for pos in range(len(df)):
+        execucoes.append(mapa_exec_up.get(pos, mapa_exec_nao_up.get(pos, "")))
+        revisoes.append(mapa_rev.get(pos, ""))
+
+    df["ResponsavelExecucao"] = execucoes
+    df["ResponsavelRevisao"] = revisoes
+    return df
+
+
+def atribuir_responsaveis_requerimentos(
+    df: pd.DataFrame,
+    indisponiveis: set[str] | None = None,
+) -> pd.DataFrame:
+    df = inicializar_df_responsaveis(df)
+    if df.empty:
+        return df
+
+    cand_exec = candidatos_para_tarefa("execucao_requerimentos", indisponiveis)
+    cand_rev = candidatos_para_tarefa("revisao_requerimentos", indisponiveis)
+
+    execucoes = distribuir_em_blocos(len(df), cand_exec)
+    revisoes = [""] * len(df)
+
+    posicoes_com_revisao = []
+
+    for pos, executor in enumerate(execucoes):
+        if pessoa_pertence_ao_grupo(executor, "BIBLIOTECARIO"):
+            revisoes[pos] = "-"
+        else:
+            posicoes_com_revisao.append(pos)
+
+    mapa_rev = distribuir_para_posicoes(len(df), posicoes_com_revisao, cand_rev)
+
+    for pos in posicoes_com_revisao:
+        revisoes[pos] = mapa_rev.get(pos, "")
+
+    df["ResponsavelExecucao"] = execucoes
+    df["ResponsavelRevisao"] = revisoes
+    return df
+
+
+def atribuir_responsaveis_pareceres(
+    df: pd.DataFrame,
+    indisponiveis: set[str] | None = None,
+) -> pd.DataFrame:
+    df = inicializar_df_responsaveis(df)
+    if df.empty:
+        return df
+
+    cand_exec = candidatos_para_tarefa("execucao_pareceres", indisponiveis)
+    cand_rev = candidatos_para_tarefa("revisao_pareceres", indisponiveis)
+
+    df["ResponsavelExecucao"] = distribuir_em_blocos(len(df), cand_exec)
+    df["ResponsavelRevisao"] = distribuir_em_blocos(len(df), cand_rev)
     return df
 
 def preencher_aba_modelo(
