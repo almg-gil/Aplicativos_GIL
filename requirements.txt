@@ -13,3 +13,4 @@ transformers>=4.34.0
 nltk>=3.8.1
 gspread
 playwright
+google-api-python-client
