@@ -1068,7 +1068,7 @@ def montar_linhas_proposicoes(data_str: str, df: pd.DataFrame, url_diario: str =
     link_data = montar_link_data(data_str, url_diario)
 
     if df is None or df.empty:
-        return [[link_data, "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]]
+        return [[link_data, "", "", "", "", "", ""]]
 
     df = df.fillna("")
     linhas = []
@@ -1080,22 +1080,13 @@ def montar_linhas_proposicoes(data_str: str, df: pd.DataFrame, url_diario: str =
         )
 
         linhas.append([
-            link_data if i == 0 else "",
-            r.get("Tipo", ""),
-            numero_link,
-            r.get("Ano", ""),
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            nome_planilha(r.get("ResponsavelExecucao", "")),
-            nome_planilha(r.get("ResponsavelRevisao", "")),
-            r.get("Observação", r.get("Categoria", ""))
+            link_data if i == 0 else "",   # A
+            r.get("Tipo", ""),             # B
+            numero_link,                   # C
+            r.get("Ano", ""),              # D
+            r.get("Execucao", ""),         # E
+            r.get("Revisao", ""),          # F
+            r.get("Observação", r.get("Categoria", ""))  # G
         ])
     return linhas
 
@@ -1104,10 +1095,11 @@ def montar_linhas_requerimentos(data_str: str, df: pd.DataFrame, url_diario: str
     link_data = montar_link_data(data_str, url_diario)
 
     if df is None or df.empty:
-        return [[link_data, "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]]
+        return [[link_data, "", "", "", "", "", ""]]
 
     df = df.fillna("")
     linhas = []
+
     for i, (_, r) in enumerate(df.iterrows()):
         numero_link = montar_link_numero_proposicao(
             tipo=r.get("Tipo", ""),
@@ -1116,22 +1108,13 @@ def montar_linhas_requerimentos(data_str: str, df: pd.DataFrame, url_diario: str
         )
 
         linhas.append([
-            link_data if i == 0 else "",
-            r.get("Tipo", ""),
-            numero_link,
-            r.get("Ano", ""),
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            nome_planilha(r.get("ResponsavelExecucao", "")),
-            nome_planilha(r.get("ResponsavelRevisao", "")),
-            r.get("Observação", r.get("Classificação", ""))
+            link_data if i == 0 else "",   # A
+            r.get("Tipo", ""),             # B
+            numero_link,                   # C
+            r.get("Ano", ""),              # D
+            r.get("Execucao", ""),         # E
+            r.get("Revisao", ""),          # F
+            r.get("Observação", r.get("Classificação", ""))  # G
         ])
     return linhas
 
@@ -1140,10 +1123,11 @@ def montar_linhas_pareceres(data_str: str, df: pd.DataFrame, url_diario: str = "
     link_data = montar_link_data(data_str, url_diario)
 
     if df is None or df.empty:
-        return [[link_data, "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]]
+        return [[link_data, "", "", "", "", "", "", ""]]
 
     df = df.fillna("")
     linhas = []
+
     for i, (_, r) in enumerate(df.iterrows()):
         numero_link = montar_link_numero_proposicao(
             tipo=r.get("Tipo", ""),
@@ -1152,25 +1136,49 @@ def montar_linhas_pareceres(data_str: str, df: pd.DataFrame, url_diario: str = "
         )
 
         linhas.append([
-            link_data if i == 0 else "",
-            r.get("Tipo", ""),
-            numero_link,
-            r.get("Ano", ""),
-            r.get("Subtipo", ""),
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            nome_planilha(r.get("ResponsavelExecucao", "")),
-            nome_planilha(r.get("ResponsavelRevisao", "")),
-            r.get("Observação", "")
+            link_data if i == 0 else "",   # A
+            r.get("Tipo", ""),             # B
+            numero_link,                   # C
+            r.get("Ano", ""),              # D
+            r.get("Subtipo", ""),          # E
+            r.get("Execucao", ""),         # F
+            r.get("Revisao", ""),          # G
+            r.get("Observação", "")        # H
         ])
     return linhas
 
+def distribuir_em_blocos(qtd: int, pessoas: list[str]) -> list[str]:
+    pessoas = [p for p in pessoas if p]
+    if qtd <= 0:
+        return []
+    if not pessoas:
+        return [""] * qtd
+
+    base, resto = divmod(qtd, len(pessoas))
+    resultado = []
+
+    for i, pessoa in enumerate(pessoas):
+        repetir = base + (1 if i < resto else 0)
+        resultado.extend([pessoa] * repetir)
+
+    return resultado
+
+
+def atribuir_responsaveis_em_blocos(
+    df: pd.DataFrame,
+    execucoes: list[str],
+    revisoes: list[str]
+) -> pd.DataFrame:
+    df = df.copy()
+
+    if df.empty:
+        df["Execucao"] = []
+        df["Revisao"] = []
+        return df
+
+    df["Execucao"] = distribuir_em_blocos(len(df), execucoes)
+    df["Revisao"] = distribuir_em_blocos(len(df), revisoes)
+    return df
 
 def preencher_aba_modelo(
     ws,
