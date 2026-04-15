@@ -402,7 +402,7 @@ def distribuir_responsaveis_dataframe(
     return df
 
 
-def distribuir_tarefas_extraidas(
+def distribuir_tarefas_extraidas_em_blocos(
     df_exec: pd.DataFrame,
     df_adm: pd.DataFrame,
     df_leg_normas: pd.DataFrame,
@@ -411,52 +411,44 @@ def distribuir_tarefas_extraidas(
     df_pareceres: pd.DataFrame,
     indisponiveis: set[str] | None = None,
 ):
-    distribuidor = DistribuidorRoundRobin()
-
-    df_exec = distribuir_responsaveis_dataframe(
+    df_exec = atribuir_responsaveis_em_blocos(
         df_exec,
         chave_execucao="normas_execucao",
         chave_revisao="normas_revisao",
         indisponiveis=indisponiveis,
-        distribuidor=distribuidor,
         replicar_em_linhas_continuacao=True,
     )
-    df_adm = distribuir_responsaveis_dataframe(
+    df_adm = atribuir_responsaveis_em_blocos(
         df_adm,
         chave_execucao="normas_execucao",
         chave_revisao="normas_revisao",
         indisponiveis=indisponiveis,
-        distribuidor=distribuidor,
         replicar_em_linhas_continuacao=True,
     )
-    df_leg_normas = distribuir_responsaveis_dataframe(
+    df_leg_normas = atribuir_responsaveis_em_blocos(
         df_leg_normas,
         chave_execucao="normas_execucao",
         chave_revisao="normas_revisao",
         indisponiveis=indisponiveis,
-        distribuidor=distribuidor,
         replicar_em_linhas_continuacao=True,
     )
-    df_props = distribuir_responsaveis_dataframe(
+    df_props = atribuir_responsaveis_em_blocos(
         df_props,
         chave_execucao="proposicoes_execucao",
         chave_revisao="proposicoes_revisao",
         indisponiveis=indisponiveis,
-        distribuidor=distribuidor,
     )
-    df_reqs = distribuir_responsaveis_dataframe(
+    df_reqs = atribuir_responsaveis_em_blocos(
         df_reqs,
         chave_execucao="requerimentos_execucao",
         chave_revisao="requerimentos_revisao",
         indisponiveis=indisponiveis,
-        distribuidor=distribuidor,
     )
-    df_pareceres = distribuir_responsaveis_dataframe(
+    df_pareceres = atribuir_responsaveis_em_blocos(
         df_pareceres,
         chave_execucao="pareceres_execucao",
         chave_revisao="pareceres_revisao",
         indisponiveis=indisponiveis,
-        distribuidor=distribuidor,
     )
 
     return df_exec, df_adm, df_leg_normas, df_props, df_reqs, df_pareceres
@@ -1079,14 +1071,17 @@ def montar_linhas_proposicoes(data_str: str, df: pd.DataFrame, url_diario: str =
             ano=r.get("Ano", "")
         )
 
+        responsavel_exec = nome_planilha(r.get("ResponsavelExecucao", ""))
+        responsavel_rev = nome_planilha(r.get("ResponsavelRevisao", ""))
+
         linhas.append([
-            link_data if i == 0 else "",   # A
-            r.get("Tipo", ""),             # B
-            numero_link,                   # C
-            r.get("Ano", ""),              # D
-            r.get("Execucao", ""),         # E
-            r.get("Revisao", ""),          # F
-            r.get("Observação", r.get("Categoria", ""))  # G
+            link_data if i == 0 else "",
+            r.get("Tipo", ""),
+            numero_link,
+            r.get("Ano", ""),
+            responsavel_exec,
+            responsavel_rev,
+            r.get("Observação", r.get("Categoria", ""))
         ])
     return linhas
 
@@ -1107,14 +1102,17 @@ def montar_linhas_requerimentos(data_str: str, df: pd.DataFrame, url_diario: str
             ano=r.get("Ano", "")
         )
 
+        responsavel_exec = nome_planilha(r.get("ResponsavelExecucao", ""))
+        responsavel_rev = nome_planilha(r.get("ResponsavelRevisao", ""))
+
         linhas.append([
-            link_data if i == 0 else "",   # A
-            r.get("Tipo", ""),             # B
-            numero_link,                   # C
-            r.get("Ano", ""),              # D
-            r.get("Execucao", ""),         # E
-            r.get("Revisao", ""),          # F
-            r.get("Observação", r.get("Classificação", ""))  # G
+            link_data if i == 0 else "",
+            r.get("Tipo", ""),
+            numero_link,
+            r.get("Ano", ""),
+            responsavel_exec,
+            responsavel_rev,
+            r.get("Observação", r.get("Classificação", ""))
         ])
     return linhas
 
@@ -1135,20 +1133,23 @@ def montar_linhas_pareceres(data_str: str, df: pd.DataFrame, url_diario: str = "
             ano=r.get("Ano", "")
         )
 
+        responsavel_exec = nome_planilha(r.get("ResponsavelExecucao", ""))
+        responsavel_rev = nome_planilha(r.get("ResponsavelRevisao", ""))
+
         linhas.append([
-            link_data if i == 0 else "",   # A
-            r.get("Tipo", ""),             # B
-            numero_link,                   # C
-            r.get("Ano", ""),              # D
-            r.get("Subtipo", ""),          # E
-            r.get("Execucao", ""),         # F
-            r.get("Revisao", ""),          # G
-            r.get("Observação", "")        # H
+            link_data if i == 0 else "",
+            r.get("Tipo", ""),
+            numero_link,
+            r.get("Ano", ""),
+            r.get("Subtipo", ""),
+            responsavel_exec,
+            responsavel_rev,
+            r.get("Observação", "")
         ])
     return linhas
 
 def distribuir_em_blocos(qtd: int, pessoas: list[str]) -> list[str]:
-    pessoas = [p for p in pessoas if p]
+    pessoas = [nome_planilha(p) for p in pessoas if str(p).strip()]
     if qtd <= 0:
         return []
     if not pessoas:
@@ -1166,18 +1167,59 @@ def distribuir_em_blocos(qtd: int, pessoas: list[str]) -> list[str]:
 
 def atribuir_responsaveis_em_blocos(
     df: pd.DataFrame,
-    execucoes: list[str],
-    revisoes: list[str]
+    chave_execucao: str = "",
+    chave_revisao: str = "",
+    indisponiveis: set[str] | None = None,
+    replicar_em_linhas_continuacao: bool = False,
 ) -> pd.DataFrame:
+    if df is None:
+        return pd.DataFrame()
+
     df = df.copy()
 
     if df.empty:
-        df["Execucao"] = []
-        df["Revisao"] = []
+        df["ResponsavelExecucao"] = ""
+        df["ResponsavelRevisao"] = ""
         return df
 
-    df["Execucao"] = distribuir_em_blocos(len(df), execucoes)
-    df["Revisao"] = distribuir_em_blocos(len(df), revisoes)
+    candidatos_exec = candidatos_para_tarefa(chave_execucao, indisponiveis) if chave_execucao else []
+    candidatos_rev = candidatos_para_tarefa(chave_revisao, indisponiveis) if chave_revisao else []
+
+    if replicar_em_linhas_continuacao:
+        mascara_cont = []
+        qtd_principais = 0
+
+        for _, r in df.iterrows():
+            cont = linha_continuacao_norma(r)
+            mascara_cont.append(cont)
+            if not cont:
+                qtd_principais += 1
+
+        exec_principais = distribuir_em_blocos(qtd_principais, candidatos_exec)
+        rev_principais = distribuir_em_blocos(qtd_principais, candidatos_rev)
+
+        execucoes = []
+        revisoes = []
+        idx_principal = 0
+        ultimo_exec = ""
+        ultimo_rev = ""
+
+        for cont in mascara_cont:
+            if cont:
+                execucoes.append(ultimo_exec)
+                revisoes.append(ultimo_rev)
+            else:
+                ultimo_exec = exec_principais[idx_principal] if idx_principal < len(exec_principais) else ""
+                ultimo_rev = rev_principais[idx_principal] if idx_principal < len(rev_principais) else ""
+                execucoes.append(ultimo_exec)
+                revisoes.append(ultimo_rev)
+                idx_principal += 1
+    else:
+        execucoes = distribuir_em_blocos(len(df), candidatos_exec)
+        revisoes = distribuir_em_blocos(len(df), candidatos_rev)
+
+    df["ResponsavelExecucao"] = execucoes
+    df["ResponsavelRevisao"] = revisoes
     return df
 
 def preencher_aba_modelo(
