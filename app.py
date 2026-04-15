@@ -380,6 +380,57 @@ def eh_proposicao_up(r: pd.Series) -> bool:
     valor = r.get("Observação", r.get("Categoria", ""))
     return nome_planilha(valor) == "UP"
 
+REQ_SEM_TRATAMENTO = {
+    "VOTO DE CONGRATULAÇÕES",
+    "MANIFESTAÇÃO DE PESAR",
+    "MANIFESTAÇÃO DE REPÚDIO",
+    "MOÇÃO DE APLAUSO",
+    "MANIFESTAÇÃO DE APOIO",
+    "APLAUSO",
+}
+
+
+def requerimento_sem_tratamento(r: pd.Series) -> bool:
+    valor = r.get("Observação", r.get("Classificação", ""))
+    return nome_planilha(valor) in REQ_SEM_TRATAMENTO
+
+
+def distribuir_revisores_sem_mesma_pessoa(execucoes: list[str], candidatos_rev: list[str]) -> list[str]:
+    execucoes = [nome_planilha(x) for x in execucoes]
+    candidatos_rev = [nome_planilha(x) for x in candidatos_rev if str(x).strip()]
+
+    if not execucoes:
+        return []
+    if not candidatos_rev:
+        return [""] * len(execucoes)
+
+    revisao_base = distribuir_em_blocos(len(execucoes), candidatos_rev)
+    uso = {p: 0 for p in candidatos_rev}
+    revisoes = []
+
+    for i, executor in enumerate(execucoes):
+        preferido = revisao_base[i] if i < len(revisao_base) else ""
+
+        if preferido and preferido != executor:
+            escolhido = preferido
+        else:
+            opcoes = [p for p in candidatos_rev if p != executor]
+
+            if not opcoes:
+                escolhido = ""
+            else:
+                menor_uso = min(uso[p] for p in opcoes)
+                escolhido = next(
+                    p for p in candidatos_rev
+                    if p in opcoes and uso[p] == menor_uso
+                )
+
+        revisoes.append(escolhido)
+        if escolhido:
+            uso[escolhido] += 1
+
+    return revisoes
+
 
 class DistribuidorRoundRobin:
     def __init__(self):
@@ -1312,21 +1363,41 @@ def atribuir_responsaveis_requerimentos(
     cand_exec = candidatos_para_tarefa("execucao_requerimentos", indisponiveis)
     cand_rev = candidatos_para_tarefa("revisao_requerimentos", indisponiveis)
 
-    execucoes = distribuir_em_blocos(len(df), cand_exec)
+    execucoes = [""] * len(df)
     revisoes = [""] * len(df)
 
-    posicoes_com_revisao = []
+    pos_sem_tratamento = []
+    pos_normais = []
 
-    for pos, executor in enumerate(execucoes):
+    for pos, (_, r) in enumerate(df.iterrows()):
+        if requerimento_sem_tratamento(r):
+            pos_sem_tratamento.append(pos)
+        else:
+            pos_normais.append(pos)
+
+    for pos in pos_sem_tratamento:
+        execucoes[pos] = "-"
+        revisoes[pos] = "-"
+
+    mapa_exec = distribuir_para_posicoes(len(df), pos_normais, cand_exec)
+
+    posicoes_com_revisao = []
+    execucoes_com_revisao = []
+
+    for pos in pos_normais:
+        executor = nome_planilha(mapa_exec.get(pos, ""))
+        execucoes[pos] = executor
+
         if pessoa_pertence_ao_grupo(executor, "BIBLIOTECARIO"):
             revisoes[pos] = "-"
         else:
             posicoes_com_revisao.append(pos)
+            execucoes_com_revisao.append(executor)
 
-    mapa_rev = distribuir_para_posicoes(len(df), posicoes_com_revisao, cand_rev)
+    revisores_distribuidos = distribuir_revisores_sem_mesma_pessoa(execucoes_com_revisao, cand_rev)
 
-    for pos in posicoes_com_revisao:
-        revisoes[pos] = mapa_rev.get(pos, "")
+    for pos, revisor in zip(posicoes_com_revisao, revisores_distribuidos):
+        revisoes[pos] = revisor
 
     df["ResponsavelExecucao"] = execucoes
     df["ResponsavelRevisao"] = revisoes
@@ -1344,8 +1415,11 @@ def atribuir_responsaveis_pareceres(
     cand_exec = candidatos_para_tarefa("execucao_pareceres", indisponiveis)
     cand_rev = candidatos_para_tarefa("revisao_pareceres", indisponiveis)
 
-    df["ResponsavelExecucao"] = distribuir_em_blocos(len(df), cand_exec)
-    df["ResponsavelRevisao"] = distribuir_em_blocos(len(df), cand_rev)
+    execucoes = distribuir_em_blocos(len(df), cand_exec)
+    revisoes = distribuir_revisores_sem_mesma_pessoa(execucoes, cand_rev)
+
+    df["ResponsavelExecucao"] = execucoes
+    df["ResponsavelRevisao"] = revisoes
     return df
 
 def preencher_aba_modelo(
