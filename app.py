@@ -459,43 +459,36 @@ def distribuir_tarefas_extraidas_em_blocos(
     df_pareceres: pd.DataFrame,
     indisponiveis: set[str] | None = None,
 ):
-    df_exec = atribuir_responsaveis_em_blocos(
+    df_exec = atribuir_responsaveis_normas(
         df_exec,
-        chave_execucao="normas_execucao",
-        chave_revisao="normas_revisao",
         indisponiveis=indisponiveis,
         replicar_em_linhas_continuacao=True,
     )
-    df_adm = atribuir_responsaveis_em_blocos(
+
+    df_adm = atribuir_responsaveis_normas(
         df_adm,
-        chave_execucao="normas_execucao",
-        chave_revisao="normas_revisao",
         indisponiveis=indisponiveis,
         replicar_em_linhas_continuacao=True,
     )
-    df_leg_normas = atribuir_responsaveis_em_blocos(
+
+    df_leg_normas = atribuir_responsaveis_normas(
         df_leg_normas,
-        chave_execucao="normas_execucao",
-        chave_revisao="normas_revisao",
         indisponiveis=indisponiveis,
         replicar_em_linhas_continuacao=True,
     )
-    df_props = atribuir_responsaveis_em_blocos(
+
+    df_props = atribuir_responsaveis_proposicoes(
         df_props,
-        chave_execucao="proposicoes_execucao",
-        chave_revisao="proposicoes_revisao",
         indisponiveis=indisponiveis,
     )
-    df_reqs = atribuir_responsaveis_em_blocos(
+
+    df_reqs = atribuir_responsaveis_requerimentos(
         df_reqs,
-        chave_execucao="requerimentos_execucao",
-        chave_revisao="requerimentos_revisao",
         indisponiveis=indisponiveis,
     )
-    df_pareceres = atribuir_responsaveis_em_blocos(
+
+    df_pareceres = atribuir_responsaveis_pareceres(
         df_pareceres,
-        chave_execucao="pareceres_execucao",
-        chave_revisao="pareceres_revisao",
         indisponiveis=indisponiveis,
     )
 
