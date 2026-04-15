@@ -756,7 +756,7 @@ def aplicar_cor_responsaveis(ws, linha_inicial: int, linhas: list[list], colunas
                         "userEnteredFormat": {
                             "textFormat": {
                                 "foregroundColor": {
-                                    "red": 0.80,
+                                    "red": 1.0,
                                     "green": 0.00,
                                     "blue": 0.00,
                                 },
