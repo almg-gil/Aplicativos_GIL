@@ -3113,7 +3113,7 @@ def run_app():
                 df_props,
                 df_reqs,
                 df_pareceres,
-            ) = distribuir_tarefas_extraidas(
+            ) = distribuir_tarefas_extraidas_em_blocos(
                 df_exec=df_exec,
                 df_adm=df_adm,
                 df_leg_normas=df_leg_normas,
