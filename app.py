@@ -1681,6 +1681,9 @@ class LegislativeProcessor:
                         "Alterações": chave
                     })
 
+            if linha["Sigla"] == "EMC":
+                add_alteracao("CON 1989 1989")
+
             eventos = []
             for c in comandos_regex.finditer(bloco):
                 eventos.append(("command", c.start(), c))
