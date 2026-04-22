@@ -1117,18 +1117,21 @@ def montar_linhas_normas(data_str: str, df: pd.DataFrame, url_diario: str = "") 
     linhas = []
 
     for i, (_, r) in enumerate(df.iterrows()):
+        alteracao_raw = r.get("Alterações", "")
+        quantidade, vides = obter_quantidade_e_vides(alteracao_raw)
+
         numero_link = montar_link_numero_norma(
             tipo=r.get("Tipo", ""),
             numero=r.get("Número", ""),
             sancao=r.get("Sanção", "")
         )
 
-        alteracao_link = montar_link_alteracao_norma(r.get("Alterações", ""))
+        alteracao_link = montar_link_alteracao_norma(alteracao_raw)
         responsavel_exec = nome_planilha(r.get("ResponsavelExecucao", ""))
         responsavel_rev = nome_planilha(r.get("ResponsavelRevisao", ""))
 
         eh_continuacao = linha_continuacao_norma(r)
-        tem_alteracao = bool(str(r.get("Alterações", "")).strip())
+        tem_alteracao = bool(str(alteracao_raw).strip())
 
         if eh_continuacao:
             linhas.append([
@@ -1140,11 +1143,11 @@ def montar_linhas_normas(data_str: str, df: pd.DataFrame, url_diario: str = "") 
                 "-",   # Nº
                 "-",   # Implantação Execução
                 "-",   # Implantação Revisão
-                1,     # Quantidade
-                alteracao_link,      # Norma alterada
-                1,     # Vides
-                responsavel_exec,    # Consolidação Execução
-                responsavel_rev,     # Consolidação Revisão
+                quantidade if tem_alteracao else "",   # Quantidade
+                alteracao_link,                        # Norma alterada
+                vides if tem_alteracao else "",        # Vides
+                responsavel_exec,                      # Consolidação Execução
+                responsavel_rev,                       # Consolidação Revisão
                 "-",   # Indexação Execução
                 "-",   # Indexação Revisão
                 r.get("Observação", "")
@@ -1159,9 +1162,9 @@ def montar_linhas_normas(data_str: str, df: pd.DataFrame, url_diario: str = "") 
                 numero_link,
                 responsavel_exec,    # Implantação Execução
                 responsavel_rev,     # Implantação Revisão
-                "",                  # Quantidade
-                alteracao_link,      # Norma alterada
-                "",                  # Vides
+                quantidade if tem_alteracao else "",   # Quantidade
+                alteracao_link,                        # Norma alterada
+                vides if tem_alteracao else "",        # Vides
                 responsavel_exec if tem_alteracao else "",  # Consolidação Execução
                 responsavel_rev if tem_alteracao else "",   # Consolidação Revisão
                 responsavel_exec,    # Indexação Execução
@@ -1170,7 +1173,6 @@ def montar_linhas_normas(data_str: str, df: pd.DataFrame, url_diario: str = "") 
             ])
 
     return linhas
-
 def montar_linhas_proposicoes(data_str: str, df: pd.DataFrame, url_diario: str = "") -> list[list]:
     link_data = montar_link_data(data_str, url_diario)
 
