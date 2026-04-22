@@ -119,7 +119,7 @@ GRUPOS_EQUIPE = {
 REGRAS_TAREFA = {
     "implantacao_normas_dne": {
         "grupos": ["ESTAGIARIO", "TECNICO"],
-        "excluir": ["CLÉLIA"],
+        "excluir": ["CLÉLIA", "MARCIA"],
     },
     "implantacao_normas_nao_dne": {
         "grupos": ["ESTAGIARIO", "TECNICO", "BIBLIOTECARIO_EXEC"],
@@ -127,6 +127,7 @@ REGRAS_TAREFA = {
     },
     "revisao_normas": {
         "grupos": ["BIBLIOTECARIO"],
+        "excluir": ["MARCIA"],
     },
 
     "execucao_proposicoes_nao_up": {
@@ -155,7 +156,6 @@ REGRAS_TAREFA = {
         "grupos": ["BIBLIOTECARIO"],
     },
 }
-
 ROTULOS_TAREFA = {
     "implantacao_normas_dne": "Implantação de normas DNE",
     "implantacao_normas_nao_dne": "Implantação de normas não DNE",
@@ -1156,6 +1156,7 @@ def montar_linhas_proposicoes(data_str: str, df: pd.DataFrame, url_diario: str =
 
     df = df.fillna("")
     linhas = []
+
     for i, (_, r) in enumerate(df.iterrows()):
         numero_link = montar_link_numero_proposicao(
             tipo=r.get("Tipo", ""),
@@ -1166,6 +1167,10 @@ def montar_linhas_proposicoes(data_str: str, df: pd.DataFrame, url_diario: str =
         responsavel_exec = nome_planilha(r.get("ResponsavelExecucao", ""))
         responsavel_rev = nome_planilha(r.get("ResponsavelRevisao", ""))
 
+        observacao = r.get("Observação", r.get("Categoria", ""))
+        if nome_planilha(observacao) == "UP":
+            observacao = ""
+
         linhas.append([
             link_data if i == 0 else "",
             r.get("Tipo", ""),
@@ -1173,7 +1178,7 @@ def montar_linhas_proposicoes(data_str: str, df: pd.DataFrame, url_diario: str =
             r.get("Ano", ""),
             responsavel_exec,
             responsavel_rev,
-            r.get("Observação", r.get("Categoria", ""))
+            observacao
         ])
     return linhas
 
@@ -1328,7 +1333,6 @@ def atribuir_responsaveis_proposicoes(
 
     pos_up = []
     pos_nao_up = []
-    pos_todas = list(range(len(df)))
 
     for pos, (_, r) in enumerate(df.iterrows()):
         if eh_proposicao_up(r):
@@ -1338,14 +1342,12 @@ def atribuir_responsaveis_proposicoes(
 
     mapa_exec_up = distribuir_para_posicoes(len(df), pos_up, cand_exec_up)
     mapa_exec_nao_up = distribuir_para_posicoes(len(df), pos_nao_up, cand_exec_nao_up)
-    mapa_rev = distribuir_para_posicoes(len(df), pos_todas, cand_rev)
 
     execucoes = []
-    revisoes = []
-
     for pos in range(len(df)):
         execucoes.append(mapa_exec_up.get(pos, mapa_exec_nao_up.get(pos, "")))
-        revisoes.append(mapa_rev.get(pos, ""))
+
+    revisoes = distribuir_revisores_sem_mesma_pessoa(execucoes, cand_rev)
 
     df["ResponsavelExecucao"] = execucoes
     df["ResponsavelRevisao"] = revisoes
