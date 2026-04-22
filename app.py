@@ -123,11 +123,11 @@ REGRAS_TAREFA = {
     },
     "implantacao_normas_nao_dne": {
         "grupos": ["ESTAGIARIO", "TECNICO", "BIBLIOTECARIO_EXEC"],
-        "excluir": ["PAULO", "MARCIA"],
+        "excluir": ["PAULO", "CLÉLIA", "MARCIA"],
     },
     "revisao_normas": {
         "grupos": ["BIBLIOTECARIO"],
-        "excluir": ["MARCIA"],
+        "excluir": ["CLÉLIA", "MARCIA"],
     },
 
     "execucao_proposicoes_nao_up": {
