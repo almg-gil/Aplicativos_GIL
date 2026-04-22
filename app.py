@@ -1504,7 +1504,7 @@ def preencher_aba_modelo(
     linha_exec = encontrar_linha(ws, "DIÁRIO DO EXECUTIVO", 1) + 1
     linhas_exec = montar_linhas_normas(data_str, df_exec, urls["executivo_html"])
     escrever_bloco(ws, linha_exec, linhas_exec, mesclar_coluna_a=True)
-    aplicar_cor_responsaveis(ws, linha_exec, linhas_exec, colunas=(7, 8, 14, 15))
+    aplicar_cor_responsaveis(ws, linha_leg, linhas_leg, colunas=(7, 8, 12, 13, 14, 15))
 
     # ================= TOTAIS =================
     total_1 = encontrar_linha_safe(ws, "TOTAL", 1)
