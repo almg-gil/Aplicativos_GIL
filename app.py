@@ -1128,6 +1128,7 @@ def montar_linhas_normas(data_str: str, df: pd.DataFrame, url_diario: str = "") 
         responsavel_rev = nome_planilha(r.get("ResponsavelRevisao", ""))
 
         eh_continuacao = linha_continuacao_norma(r)
+        tem_alteracao = bool(str(r.get("Alterações", "")).strip())
 
         if eh_continuacao:
             linhas.append([
@@ -1140,10 +1141,10 @@ def montar_linhas_normas(data_str: str, df: pd.DataFrame, url_diario: str = "") 
                 "-",   # Implantação Execução
                 "-",   # Implantação Revisão
                 1,     # Quantidade
-                alteracao_link,  # Norma alterada
+                alteracao_link,      # Norma alterada
                 1,     # Vides
-                responsavel_exec,  # Consolidação Execução
-                responsavel_rev,   # Consolidação Revisão
+                responsavel_exec,    # Consolidação Execução
+                responsavel_rev,     # Consolidação Revisão
                 "-",   # Indexação Execução
                 "-",   # Indexação Revisão
                 r.get("Observação", "")
@@ -1156,15 +1157,15 @@ def montar_linhas_normas(data_str: str, df: pd.DataFrame, url_diario: str = "") 
                 r.get("Sanção", ""),
                 r.get("Tipo", ""),
                 numero_link,
-                responsavel_exec,   # Implantação Execução
-                responsavel_rev,    # Implantação Revisão
-                "",                 # Quantidade
-                alteracao_link,     # Norma alterada
-                "",                 # Vides
-                "",                 # Consolidação Execução
-                "",                 # Consolidação Revisão
-                responsavel_exec,   # Indexação Execução
-                responsavel_rev,    # Indexação Revisão
+                responsavel_exec,    # Implantação Execução
+                responsavel_rev,     # Implantação Revisão
+                "",                  # Quantidade
+                alteracao_link,      # Norma alterada
+                "",                  # Vides
+                responsavel_exec if tem_alteracao else "",  # Consolidação Execução
+                responsavel_rev if tem_alteracao else "",   # Consolidação Revisão
+                responsavel_exec,    # Indexação Execução
+                responsavel_rev,     # Indexação Revisão
                 r.get("Observação", "")
             ])
 
@@ -1492,19 +1493,18 @@ def preencher_aba_modelo(
     linha_adm = encontrar_linha(ws, "DIÁRIO ADMINISTRATIVO", 1) + 1
     linhas_adm = montar_linhas_normas(data_str, df_adm, urls["administrativo"])
     escrever_bloco(ws, linha_adm, linhas_adm, mesclar_coluna_a=True)
-    aplicar_cor_responsaveis(ws, linha_leg, linhas_leg, colunas=(7, 8, 12, 13, 14, 15))
+    aplicar_cor_responsaveis(ws, linha_adm, linhas_adm, colunas=(7, 8, 12, 13, 14, 15))
 
     # ================= NORMAS - DIÁRIO DA JUSTIÇA =================
     linha_dj = encontrar_linha(ws, "DIÁRIO DA JUSTIÇA", 1) + 1
     linhas_dj = montar_linhas_normas(data_str, pd.DataFrame(), "")
     escrever_bloco(ws, linha_dj, linhas_dj, mesclar_coluna_a=True)
-    aplicar_cor_responsaveis(ws, linha_dj, linhas_dj, colunas=(7, 8, 14, 15))
-
+    aplicar_cor_responsaveis(ws, linha_dj, linhas_dj, colunas=(7, 8, 12, 13, 14, 15))
     # ================= NORMAS - EXECUTIVO =================
     linha_exec = encontrar_linha(ws, "DIÁRIO DO EXECUTIVO", 1) + 1
     linhas_exec = montar_linhas_normas(data_str, df_exec, urls["executivo_html"])
     escrever_bloco(ws, linha_exec, linhas_exec, mesclar_coluna_a=True)
-    aplicar_cor_responsaveis(ws, linha_leg, linhas_leg, colunas=(7, 8, 12, 13, 14, 15))
+    aplicar_cor_responsaveis(ws, linha_exec, linhas_exec, colunas=(7, 8, 12, 13, 14, 15))
 
     # ================= TOTAIS =================
     total_1 = encontrar_linha_safe(ws, "TOTAL", 1)
