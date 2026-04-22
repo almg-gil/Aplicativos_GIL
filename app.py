@@ -1209,9 +1209,9 @@ def montar_linhas_requerimentos(data_str: str, df: pd.DataFrame, url_diario: str
             r.get("Ano", ""),
             responsavel_exec,
             responsavel_rev,
-            r.get("Observação", r.get("Classificação", "")),
-            "", "", "", "", "", "", "", ""
+            r.get("Observação", r.get("Classificação", ""))
         ])
+
     return linhas
 
 
