@@ -1556,22 +1556,22 @@ def preencher_aba_modelo(
     total_5 = encontrar_linha_safe(ws, "TOTAL", 5)
 
     total_normas = (
-    contar_normas_principais(df_exec) +
-    contar_normas_principais(df_adm) +
-    contar_normas_principais(df_leg_normas)
-)
+        contar_normas_principais(df_exec) +
+        contar_normas_principais(df_adm) +
+        contar_normas_principais(df_leg_normas)
+    )
 
-qtd_exec, vides_exec = somar_quantidade_vides(df_exec)
-qtd_adm, vides_adm = somar_quantidade_vides(df_adm)
-qtd_leg, vides_leg = somar_quantidade_vides(df_leg_normas)
+    qtd_exec, vides_exec = somar_quantidade_vides(df_exec)
+    qtd_adm, vides_adm = somar_quantidade_vides(df_adm)
+    qtd_leg, vides_leg = somar_quantidade_vides(df_leg_normas)
 
-total_quantidade = qtd_exec + qtd_adm + qtd_leg
-total_vides = vides_exec + vides_adm + vides_leg
+    total_quantidade = qtd_exec + qtd_adm + qtd_leg
+    total_vides = vides_exec + vides_adm + vides_leg
 
-if total_1:
-    escrever_celula(ws, f"F{total_1}", total_normas)
-    escrever_celula(ws, f"I{total_1}", total_quantidade)
-    escrever_celula(ws, f"K{total_1}", total_vides)
+    if total_1:
+        escrever_celula(ws, f"F{total_1}", total_normas)
+        escrever_celula(ws, f"I{total_1}", total_quantidade)
+        escrever_celula(ws, f"K{total_1}", total_vides)
 
     if total_2:
         escrever_celula(ws, f"C{total_2}", len(df_props))
