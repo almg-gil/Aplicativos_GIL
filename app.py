@@ -1486,13 +1486,13 @@ def preencher_aba_modelo(
     linha_leg = encontrar_linha(ws, "DIÁRIO DO LEGISLATIVO", 1) + 1
     linhas_leg = montar_linhas_normas(data_str, df_leg_normas, urls["legislativo"])
     escrever_bloco(ws, linha_leg, linhas_leg, mesclar_coluna_a=True)
-    aplicar_cor_responsaveis(ws, linha_leg, linhas_leg, colunas=(7, 8, 14, 15))
+    aplicar_cor_responsaveis(ws, linha_leg, linhas_leg, colunas=(7, 8, 12, 13, 14, 15))
 
     # ================= NORMAS - ADMINISTRATIVO =================
     linha_adm = encontrar_linha(ws, "DIÁRIO ADMINISTRATIVO", 1) + 1
     linhas_adm = montar_linhas_normas(data_str, df_adm, urls["administrativo"])
     escrever_bloco(ws, linha_adm, linhas_adm, mesclar_coluna_a=True)
-    aplicar_cor_responsaveis(ws, linha_adm, linhas_adm, colunas=(7, 8, 14, 15))
+    aplicar_cor_responsaveis(ws, linha_leg, linhas_leg, colunas=(7, 8, 12, 13, 14, 15))
 
     # ================= NORMAS - DIÁRIO DA JUSTIÇA =================
     linha_dj = encontrar_linha(ws, "DIÁRIO DA JUSTIÇA", 1) + 1
