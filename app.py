@@ -1144,17 +1144,6 @@ def montar_link_numero_proposicao(tipo: str, numero, ano) -> str:
     url_esc = url.replace('"', '""')
 
     return f'=HIPERLINK("{url_esc}";"{numero_txt_esc}")'
-    
-def obter_quantidade_e_vides(alteracao) -> tuple:
-    texto = str(alteracao or "").strip().upper()
-
-    if not texto:
-        return "", ""
-
-    if texto == "DEC 48589 2023":
-        return 0, 1
-
-    return 1, 1
 
 def montar_linhas_normas(data_str: str, df: pd.DataFrame, url_diario: str = "") -> list[list]:
     link_data = montar_link_data(data_str, url_diario)
@@ -1566,17 +1555,23 @@ def preencher_aba_modelo(
     total_4 = encontrar_linha_safe(ws, "TOTAL", 4)
     total_5 = encontrar_linha_safe(ws, "TOTAL", 5)
 
-    total_normas = len(df_exec) + len(df_adm) + len(df_leg_normas)
-    total_alteracoes = (
-        contar_alteracoes(df_exec) +
-        contar_alteracoes(df_adm) +
-        contar_alteracoes(df_leg_normas)
-    )
+    total_normas = (
+    contar_normas_principais(df_exec) +
+    contar_normas_principais(df_adm) +
+    contar_normas_principais(df_leg_normas)
+)
 
-    if total_1:
-        escrever_celula(ws, f"F{total_1}", total_normas)
-        escrever_celula(ws, f"I{total_1}", total_alteracoes)
-        escrever_celula(ws, f"J{total_1}", 0)
+qtd_exec, vides_exec = somar_quantidade_vides(df_exec)
+qtd_adm, vides_adm = somar_quantidade_vides(df_adm)
+qtd_leg, vides_leg = somar_quantidade_vides(df_leg_normas)
+
+total_quantidade = qtd_exec + qtd_adm + qtd_leg
+total_vides = vides_exec + vides_adm + vides_leg
+
+if total_1:
+    escrever_celula(ws, f"F{total_1}", total_normas)
+    escrever_celula(ws, f"I{total_1}", total_quantidade)
+    escrever_celula(ws, f"K{total_1}", total_vides)
 
     if total_2:
         escrever_celula(ws, f"C{total_2}", len(df_props))
