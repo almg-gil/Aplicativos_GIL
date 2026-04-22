@@ -1127,26 +1127,48 @@ def montar_linhas_normas(data_str: str, df: pd.DataFrame, url_diario: str = "") 
         responsavel_exec = nome_planilha(r.get("ResponsavelExecucao", ""))
         responsavel_rev = nome_planilha(r.get("ResponsavelRevisao", ""))
 
-        linhas.append([
-            link_data if i == 0 else "",
-            r.get("Página", ""),
-            r.get("Coluna", ""),
-            r.get("Sanção", ""),
-            r.get("Tipo", ""),
-            numero_link,
-            responsavel_exec,
-            responsavel_rev,
-            "",
-            alteracao_link,
-            "",
-            "",
-            "",
-            responsavel_exec,
-            responsavel_rev,
-            r.get("Observação", "")
-        ])
-    return linhas
+        eh_continuacao = linha_continuacao_norma(r)
 
+        if eh_continuacao:
+            linhas.append([
+                link_data if i == 0 else "",
+                "-",   # Página
+                "-",   # Coluna
+                "-",   # Sanção
+                "-",   # Tipo
+                "-",   # Nº
+                "-",   # Implantação Execução
+                "-",   # Implantação Revisão
+                1,     # Quantidade
+                alteracao_link,  # Norma alterada
+                1,     # Vides
+                responsavel_exec,  # Consolidação Execução
+                responsavel_rev,   # Consolidação Revisão
+                "-",   # Indexação Execução
+                "-",   # Indexação Revisão
+                r.get("Observação", "")
+            ])
+        else:
+            linhas.append([
+                link_data if i == 0 else "",
+                r.get("Página", ""),
+                r.get("Coluna", ""),
+                r.get("Sanção", ""),
+                r.get("Tipo", ""),
+                numero_link,
+                responsavel_exec,   # Implantação Execução
+                responsavel_rev,    # Implantação Revisão
+                "",                 # Quantidade
+                alteracao_link,     # Norma alterada
+                "",                 # Vides
+                "",                 # Consolidação Execução
+                "",                 # Consolidação Revisão
+                responsavel_exec,   # Indexação Execução
+                responsavel_rev,    # Indexação Revisão
+                r.get("Observação", "")
+            ])
+
+    return linhas
 
 def montar_linhas_proposicoes(data_str: str, df: pd.DataFrame, url_diario: str = "") -> list[list]:
     link_data = montar_link_data(data_str, url_diario)
