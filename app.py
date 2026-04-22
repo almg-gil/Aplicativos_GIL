@@ -652,7 +652,7 @@ def escrever_bloco(ws, linha_inicial: int, linhas: list[list], mesclar_coluna_a:
             [[""] * ncols for _ in range(extras)],
             row=linha_inicial + 1,
             value_input_option="USER_ENTERED",
-            inherit_from_before=True
+            inherit_from_before=False
         )
 
     col_fim = num_to_col(ncols)
