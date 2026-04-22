@@ -1105,7 +1105,17 @@ def montar_link_numero_proposicao(tipo: str, numero, ano) -> str:
     url_esc = url.replace('"', '""')
 
     return f'=HIPERLINK("{url_esc}";"{numero_txt_esc}")'
+    
+def obter_quantidade_e_vides(alteracao) -> tuple:
+    texto = str(alteracao or "").strip().upper()
 
+    if not texto:
+        return "", ""
+
+    if texto == "DEC 48589 2023":
+        return 0, 1
+
+    return 1, 1
 
 def montar_linhas_normas(data_str: str, df: pd.DataFrame, url_diario: str = "") -> list[list]:
     link_data = montar_link_data(data_str, url_diario)
