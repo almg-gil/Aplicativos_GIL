@@ -1535,28 +1535,51 @@ def preencher_aba_modelo(
     linhas_props = montar_linhas_proposicoes(
         data_str, df_props, urls["legislativo"], preencher_vazio_com_traco=True
     )
+    desmesclar_intervalo(ws, linha_props, len(linhas_props), 7, 15)
+    escrever_bloco(ws, linha_props, linhas_props, mesclar_coluna_a=True)
+    mesclar_linhas_intervalo(ws, linha_props, len(linhas_props), 7, 15)
+    aplicar_cor_responsaveis(ws, linha_props, linhas_props, colunas=(5, 6))
 
     # ================= REQUERIMENTOS =================
     linha_reqs = encontrar_linha(ws, "REQUERIMENTOS", 1) + 1
     linhas_reqs = montar_linhas_requerimentos(
         data_str, df_reqs, urls["legislativo"], preencher_vazio_com_traco=True
     )
+    desmesclar_intervalo(ws, linha_reqs, len(linhas_reqs), 7, 15)
+    escrever_bloco(ws, linha_reqs, linhas_reqs, mesclar_coluna_a=True)
+    mesclar_linhas_intervalo(ws, linha_reqs, len(linhas_reqs), 7, 15)
+    aplicar_cor_responsaveis(ws, linha_reqs, linhas_reqs, colunas=(5, 6))
 
     # ================= PARECERES =================
     linha_pareceres = encontrar_linha(ws, "PARECERES", 1) + 1
     linhas_pareceres = montar_linhas_pareceres(
         data_str, df_pareceres, urls["legislativo"], preencher_vazio_com_traco=True
     )
+    desmesclar_intervalo(ws, linha_pareceres, len(linhas_pareceres), 8, 15)
+    escrever_bloco(ws, linha_pareceres, linhas_pareceres, mesclar_coluna_a=True)
+    mesclar_linhas_intervalo(ws, linha_pareceres, len(linhas_pareceres), 8, 15)
+    aplicar_cor_responsaveis(ws, linha_pareceres, linhas_pareceres, colunas=(6, 7))
+
+    # ================= NORMAS - LEGISLATIVO =================
+    linha_leg = encontrar_linha(ws, "DIÁRIO DO LEGISLATIVO", 1) + 1
+    linhas_leg = montar_linhas_normas(data_str, df_leg_normas, urls["legislativo"])
+    escrever_bloco(ws, linha_leg, linhas_leg, mesclar_coluna_a=True)
+    aplicar_cor_responsaveis(ws, linha_leg, linhas_leg, colunas=(7, 8, 12, 13, 14, 15))
 
     # ================= NORMAS - ADMINISTRATIVO =================
     linha_adm = encontrar_linha(ws, "DIÁRIO ADMINISTRATIVO", 1) + 1
     linhas_adm = montar_linhas_normas(
         data_str, df_adm, urls["administrativo"], preencher_vazio_com_traco=True
     )
+    escrever_bloco(ws, linha_adm, linhas_adm, mesclar_coluna_a=True)
+    aplicar_cor_responsaveis(ws, linha_adm, linhas_adm, colunas=(7, 8, 12, 13, 14, 15))
 
     # ================= NORMAS - DIÁRIO DA JUSTIÇA =================
     linha_dj = encontrar_linha(ws, "DIÁRIO DA JUSTIÇA", 1) + 1
     linhas_dj = montar_linhas_normas(data_str, pd.DataFrame(), "")
+    escrever_bloco(ws, linha_dj, linhas_dj, mesclar_coluna_a=True)
+    aplicar_cor_responsaveis(ws, linha_dj, linhas_dj, colunas=(7, 8, 12, 13, 14, 15))
+
     # ================= NORMAS - EXECUTIVO =================
     linha_exec = encontrar_linha(ws, "DIÁRIO DO EXECUTIVO", 1) + 1
     linhas_exec = montar_linhas_normas(data_str, df_exec, urls["executivo_html"])
