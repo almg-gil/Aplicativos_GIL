@@ -1145,10 +1145,17 @@ def montar_link_numero_proposicao(tipo: str, numero, ano) -> str:
 
     return f'=HIPERLINK("{url_esc}";"{numero_txt_esc}")'
 
-def montar_linhas_normas(data_str: str, df: pd.DataFrame, url_diario: str = "") -> list[list]:
+def montar_linhas_normas(
+    data_str: str,
+    df: pd.DataFrame,
+    url_diario: str = "",
+    preencher_vazio_com_traco: bool = False
+) -> list[list]:
     link_data = montar_link_data(data_str, url_diario)
 
     if df is None or df.empty:
+        if preencher_vazio_com_traco:
+            return [[link_data, "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"]]
         return [[link_data, "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]]
 
     df = df.fillna("")
@@ -1175,20 +1182,20 @@ def montar_linhas_normas(data_str: str, df: pd.DataFrame, url_diario: str = "") 
         if eh_continuacao:
             linhas.append([
                 link_data if i == 0 else "",
-                "-",   # Página
-                "-",   # Coluna
-                "-",   # Sanção
-                "-",   # Tipo
-                "-",   # Nº
-                "-",   # Implantação Execução
-                "-",   # Implantação Revisão
-                quantidade,          # Quantidade
-                alteracao_link,      # Norma alterada
-                vides,               # Vides
-                responsavel_exec,    # Consolidação Execução
-                responsavel_rev,     # Consolidação Revisão
-                "-",                 # Indexação Execução
-                "-",                 # Indexação Revisão
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                quantidade,
+                alteracao_link,
+                vides,
+                responsavel_exec,
+                responsavel_rev,
+                "-",
+                "-",
                 r.get("Observação", "")
             ])
         else:
@@ -1199,24 +1206,32 @@ def montar_linhas_normas(data_str: str, df: pd.DataFrame, url_diario: str = "") 
                 r.get("Sanção", ""),
                 r.get("Tipo", ""),
                 numero_link,
-                responsavel_exec,                           # Implantação Execução
-                responsavel_rev,                            # Implantação Revisão
-                quantidade if tem_alteracao else "-",       # Quantidade
-                alteracao_link if tem_alteracao else "-",   # Norma alterada
-                vides if tem_alteracao else "-",            # Vides
-                responsavel_exec if tem_alteracao else "-", # Consolidação Execução
-                responsavel_rev if tem_alteracao else "-",  # Consolidação Revisão
-                responsavel_exec,                           # Indexação Execução
-                responsavel_rev,                            # Indexação Revisão
+                responsavel_exec,
+                responsavel_rev,
+                quantidade if tem_alteracao else "-",
+                alteracao_link if tem_alteracao else "-",
+                vides if tem_alteracao else "-",
+                responsavel_exec if tem_alteracao else "-",
+                responsavel_rev if tem_alteracao else "-",
+                responsavel_exec,
+                responsavel_rev,
                 r.get("Observação", "")
             ])
 
     return linhas
-    
-def montar_linhas_proposicoes(data_str: str, df: pd.DataFrame, url_diario: str = "") -> list[list]:
+
+
+def montar_linhas_proposicoes(
+    data_str: str,
+    df: pd.DataFrame,
+    url_diario: str = "",
+    preencher_vazio_com_traco: bool = False
+) -> list[list]:
     link_data = montar_link_data(data_str, url_diario)
 
     if df is None or df.empty:
+        if preencher_vazio_com_traco:
+            return [[link_data, "-", "-", "-", "-", "-", "-"]]
         return [[link_data, "", "", "", "", "", ""]]
 
     df = df.fillna("")
@@ -1248,10 +1263,17 @@ def montar_linhas_proposicoes(data_str: str, df: pd.DataFrame, url_diario: str =
     return linhas
 
 
-def montar_linhas_requerimentos(data_str: str, df: pd.DataFrame, url_diario: str = "") -> list[list]:
+def montar_linhas_requerimentos(
+    data_str: str,
+    df: pd.DataFrame,
+    url_diario: str = "",
+    preencher_vazio_com_traco: bool = False
+) -> list[list]:
     link_data = montar_link_data(data_str, url_diario)
 
     if df is None or df.empty:
+        if preencher_vazio_com_traco:
+            return [[link_data, "-", "-", "-", "-", "-", "-"]]
         return [[link_data, "", "", "", "", "", ""]]
 
     df = df.fillna("")
@@ -1280,10 +1302,17 @@ def montar_linhas_requerimentos(data_str: str, df: pd.DataFrame, url_diario: str
     return linhas
 
 
-def montar_linhas_pareceres(data_str: str, df: pd.DataFrame, url_diario: str = "") -> list[list]:
+def montar_linhas_pareceres(
+    data_str: str,
+    df: pd.DataFrame,
+    url_diario: str = "",
+    preencher_vazio_com_traco: bool = False
+) -> list[list]:
     link_data = montar_link_data(data_str, url_diario)
 
     if df is None or df.empty:
+        if preencher_vazio_com_traco:
+            return [[link_data, "-", "-", "-", "-", "-", "-", "-"]]
         return [[link_data, "", "", "", "", "", "", ""]]
 
     df = df.fillna("")
@@ -1502,46 +1531,32 @@ def preencher_aba_modelo(
     df_pareceres: pd.DataFrame
 ):
     # ================= PROPOSIÇÕES =================
-    linha_props = encontrar_linha(ws, "PROPOSIÇÕES", 1) + 1
-    linhas_props = montar_linhas_proposicoes(data_str, df_props, urls["legislativo"])
-    desmesclar_intervalo(ws, linha_props, len(linhas_props), 7, 15)
-    escrever_bloco(ws, linha_props, linhas_props, mesclar_coluna_a=True)
-    mesclar_linhas_intervalo(ws, linha_props, len(linhas_props), 7, 15)
-    aplicar_cor_responsaveis(ws, linha_props, linhas_props, colunas=(5, 6))
+linha_props = encontrar_linha(ws, "PROPOSIÇÕES", 1) + 1
+linhas_props = montar_linhas_proposicoes(
+    data_str, df_props, urls["legislativo"], preencher_vazio_com_traco=True
+)
 
-    # ================= REQUERIMENTOS =================
-    linha_reqs = encontrar_linha(ws, "REQUERIMENTOS", 1) + 1
-    linhas_reqs = montar_linhas_requerimentos(data_str, df_reqs, urls["legislativo"])
-    desmesclar_intervalo(ws, linha_reqs, len(linhas_reqs), 7, 15)
-    escrever_bloco(ws, linha_reqs, linhas_reqs, mesclar_coluna_a=True)
-    mesclar_linhas_intervalo(ws, linha_reqs, len(linhas_reqs), 7, 15)
-    aplicar_cor_responsaveis(ws, linha_reqs, linhas_reqs, colunas=(5, 6))
+# ================= REQUERIMENTOS =================
+linha_reqs = encontrar_linha(ws, "REQUERIMENTOS", 1) + 1
+linhas_reqs = montar_linhas_requerimentos(
+    data_str, df_reqs, urls["legislativo"], preencher_vazio_com_traco=True
+)
 
-    # ================= PARECERES =================
-    linha_pareceres = encontrar_linha(ws, "PARECERES", 1) + 1
-    linhas_pareceres = montar_linhas_pareceres(data_str, df_pareceres, urls["legislativo"])
-    desmesclar_intervalo(ws, linha_pareceres, len(linhas_pareceres), 8, 15)
-    escrever_bloco(ws, linha_pareceres, linhas_pareceres, mesclar_coluna_a=True)
-    mesclar_linhas_intervalo(ws, linha_pareceres, len(linhas_pareceres), 8, 15)
-    aplicar_cor_responsaveis(ws, linha_pareceres, linhas_pareceres, colunas=(6, 7))
+# ================= PARECERES =================
+linha_pareceres = encontrar_linha(ws, "PARECERES", 1) + 1
+linhas_pareceres = montar_linhas_pareceres(
+    data_str, df_pareceres, urls["legislativo"], preencher_vazio_com_traco=True
+)
 
-    # ================= NORMAS - LEGISLATIVO =================
-    linha_leg = encontrar_linha(ws, "DIÁRIO DO LEGISLATIVO", 1) + 1
-    linhas_leg = montar_linhas_normas(data_str, df_leg_normas, urls["legislativo"])
-    escrever_bloco(ws, linha_leg, linhas_leg, mesclar_coluna_a=True)
-    aplicar_cor_responsaveis(ws, linha_leg, linhas_leg, colunas=(7, 8, 12, 13, 14, 15))
+# ================= NORMAS - ADMINISTRATIVO =================
+linha_adm = encontrar_linha(ws, "DIÁRIO ADMINISTRATIVO", 1) + 1
+linhas_adm = montar_linhas_normas(
+    data_str, df_adm, urls["administrativo"], preencher_vazio_com_traco=True
+)
 
-    # ================= NORMAS - ADMINISTRATIVO =================
-    linha_adm = encontrar_linha(ws, "DIÁRIO ADMINISTRATIVO", 1) + 1
-    linhas_adm = montar_linhas_normas(data_str, df_adm, urls["administrativo"])
-    escrever_bloco(ws, linha_adm, linhas_adm, mesclar_coluna_a=True)
-    aplicar_cor_responsaveis(ws, linha_adm, linhas_adm, colunas=(7, 8, 12, 13, 14, 15))
-
-    # ================= NORMAS - DIÁRIO DA JUSTIÇA =================
-    linha_dj = encontrar_linha(ws, "DIÁRIO DA JUSTIÇA", 1) + 1
-    linhas_dj = montar_linhas_normas(data_str, pd.DataFrame(), "")
-    escrever_bloco(ws, linha_dj, linhas_dj, mesclar_coluna_a=True)
-    aplicar_cor_responsaveis(ws, linha_dj, linhas_dj, colunas=(7, 8, 12, 13, 14, 15))
+# ================= NORMAS - DIÁRIO DA JUSTIÇA =================
+linha_dj = encontrar_linha(ws, "DIÁRIO DA JUSTIÇA", 1) + 1
+linhas_dj = montar_linhas_normas(data_str, pd.DataFrame(), "")
     # ================= NORMAS - EXECUTIVO =================
     linha_exec = encontrar_linha(ws, "DIÁRIO DO EXECUTIVO", 1) + 1
     linhas_exec = montar_linhas_normas(data_str, df_exec, urls["executivo_html"])
