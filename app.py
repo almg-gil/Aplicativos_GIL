@@ -2606,7 +2606,7 @@ class ExecutiveProcessor:
             st.error(f"Erro ao buscar páginas relevantes com PyPDF: {e}")
             return None, None
 
-        def _cortar_bloco_no_fim(self, texto: str) -> str:
+    def _cortar_bloco_no_fim(self, texto: str) -> str:
         if not texto:
             return texto
 
