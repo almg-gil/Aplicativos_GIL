@@ -2587,31 +2587,47 @@ class ExecutiveProcessor:
             return None, None
 
     def process_pdf(self) -> pd.DataFrame:
-        start_page_idx, end_page_idx = self.find_relevant_pages()
-        if start_page_idx is None:
-            return pd.DataFrame()
+    start_page_idx, end_page_idx = self.find_relevant_pages()
+    if start_page_idx is None:
+        return pd.DataFrame()
 
-        trechos = []
-        try:
-            with pdfplumber.open(io.BytesIO(self.pdf_bytes)) as pdf:
-                for i in range(start_page_idx, end_page_idx):
-                    pagina = pdf.pages[i]
-                    largura, altura = pagina.width, pagina.height
-                    for col_num, (x0, x1) in enumerate([(0, largura / 2), (largura / 2, largura)], start=1):
-                        coluna = pagina.crop((x0, 0, x1, altura)).extract_text(layout=True) or ""
-                        texto_limpo = coluna.replace("\xa0", " ")
-                        texto_limpo = self._remover_rodape_autenticidade(texto_limpo)
+    trechos = []
+    encerrar_leitura = False
 
+    try:
+        with pdfplumber.open(io.BytesIO(self.pdf_bytes)) as pdf:
+            for i in range(start_page_idx, end_page_idx):
+                if encerrar_leitura:
+                    break
+
+                pagina = pdf.pages[i]
+                largura, altura = pagina.width, pagina.height
+
+                for col_num, (x0, x1) in enumerate([(0, largura / 2), (largura / 2, largura)], start=1):
+                    coluna = pagina.crop((x0, 0, x1, altura)).extract_text(layout=True) or ""
+                    texto_limpo = coluna.replace("\xa0", " ")
+                    texto_limpo = self._remover_rodape_autenticidade(texto_limpo)
+
+                    marcador = re.search(r'Atos\s+do\s+Governador', texto_limpo, re.IGNORECASE)
+                    if marcador:
+                        texto_limpo = texto_limpo[:marcador.start()].strip()
+                        encerrar_leitura = True
+
+                    if texto_limpo.strip():
                         trechos.append({
                             "pagina": i + 1,
                             "coluna": col_num,
                             "texto": texto_limpo
                         })
 
-        except Exception as e:
-            st.error(f"Erro ao extrair texto detalhado do PDF do Executivo: {e}")
-            return pd.DataFrame()
+                    if encerrar_leitura:
+                        break
 
+    except Exception as e:
+        st.error(f"Erro ao extrair texto detalhado do PDF do Executivo: {e}")
+        return pd.DataFrame()
+
+    # resto do método permanece igual
         dados = []
         ultima_norma = None
         seen_alteracoes = set()
