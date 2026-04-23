@@ -2767,20 +2767,20 @@ def _escolher_melhor_alteracao(self, bloco: str, comando_match, candidatos: list
             seen_alteracoes = set()
 
             for c in self.comandos_regex.finditer(bloco):
-    command_text = c.group(0).lower()
+            command_text = c.group(0).lower()
 
-    if "revoga" in command_text or "revogado" in command_text:
-        # revogação pode listar várias normas
-        start_block = max(0, c.start() - 200)
-        end_block = min(len(bloco), c.end() + 1400)
-        janela = bloco[start_block:end_block]
-        alteracoes_para_processar = list(self.norma_alterada_regex.finditer(janela))
-    else:
-        # para altera / passa a vigorar / dá nova redação etc.,
-        # procura no bloco inteiro da norma e escolhe 1 candidato bom
-        alteracoes_candidatas = list(self.norma_alterada_regex.finditer(bloco))
-        melhor = self._escolher_melhor_alteracao(bloco, c, alteracoes_candidatas)
-        alteracoes_para_processar = [melhor] if melhor else []
+            if "revoga" in command_text or "revogado" in command_text:
+                # revogação pode listar várias normas
+            start_block = max(0, c.start() - 200)
+            end_block = min(len(bloco), c.end() + 1400)
+            janela = bloco[start_block:end_block]
+            alteracoes_para_processar = list(self.norma_alterada_regex.finditer(janela))
+        else:
+            # para altera / passa a vigorar / dá nova redação etc.,
+            # procura no bloco inteiro da norma e escolhe 1 candidato bom
+            alteracoes_candidatas = list(self.norma_alterada_regex.finditer(bloco))
+            melhor = self._escolher_melhor_alteracao(bloco, c, alteracoes_candidatas)
+            alteracoes_para_processar = [melhor] if melhor else []
                 for alt in alteracoes_para_processar:
                     tipo_alt_raw = alt.group(1).strip()
                     tipo_alt = self.mapa_tipos.get(tipo_alt_raw.upper(), tipo_alt_raw)
