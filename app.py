@@ -2616,6 +2616,53 @@ class ExecutiveProcessor:
 
         return texto.strip()
 
+    def _normalizar_tipo(self, tipo_txt: str) -> str:
+    tipo_txt = (tipo_txt or "").strip().upper()
+    return self.mapa_tipos.get(tipo_txt, tipo_txt)
+
+
+def _tipo_explicito_apos_comando(self, bloco: str, comando_match) -> str:
+    trecho = bloco[comando_match.end(): comando_match.end() + 120]
+
+    m = re.search(
+        r'\b(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\b',
+        trecho,
+        re.IGNORECASE
+    )
+    if not m:
+        return ""
+
+    return self._normalizar_tipo(m.group(1))
+
+
+def _escolher_melhor_alteracao(self, bloco: str, comando_match, candidatos: list):
+    if not candidatos:
+        return None
+
+    pos_comando = comando_match.start()
+    tipo_expresso = self._tipo_explicito_apos_comando(bloco, comando_match)
+
+    # 1) se o comando disser explicitamente "Decreto", "Lei" etc.,
+    # filtra primeiro por esse tipo
+    candidatos_filtrados = candidatos
+    if tipo_expresso:
+        mesmos_tipos = []
+        for cand in candidatos:
+            tipo_cand = self._normalizar_tipo(cand.group(1))
+            if tipo_cand == tipo_expresso:
+                mesmos_tipos.append(cand)
+
+        if mesmos_tipos:
+            candidatos_filtrados = mesmos_tipos
+
+    # 2) prefere candidato que venha DEPOIS do comando
+    candidatos_depois = [c for c in candidatos_filtrados if c.start() >= pos_comando]
+    if candidatos_depois:
+        candidatos_filtrados = candidatos_depois
+
+    # 3) dentre os restantes, pega o mais próximo
+    return min(candidatos_filtrados, key=lambda m: abs(m.start() - pos_comando))
+
     def process_pdf(self) -> pd.DataFrame:
         start_page_idx, end_page_idx = self.find_relevant_pages()
         if start_page_idx is None:
@@ -2720,27 +2767,20 @@ class ExecutiveProcessor:
             seen_alteracoes = set()
 
             for c in self.comandos_regex.finditer(bloco):
-                command_text = c.group(0).lower()
+    command_text = c.group(0).lower()
 
-                raio = 350
-                start_block = max(0, c.start() - raio)
-                end_block = min(len(bloco), c.end() + raio)
-                janela = bloco[start_block:end_block]
-
-                alteracoes_candidatas = list(self.norma_alterada_regex.finditer(janela))
-                if not alteracoes_candidatas:
-                    continue
-
-                if "revoga" in command_text or "revogado" in command_text:
-                    alteracoes_para_processar = alteracoes_candidatas
-                else:
-                    pos_comando = c.start() - start_block
-                    melhor = min(
-                        alteracoes_candidatas,
-                        key=lambda m: abs(m.start() - pos_comando)
-                    )
-                    alteracoes_para_processar = [melhor]
-
+    if "revoga" in command_text or "revogado" in command_text:
+        # revogação pode listar várias normas
+        start_block = max(0, c.start() - 200)
+        end_block = min(len(bloco), c.end() + 1400)
+        janela = bloco[start_block:end_block]
+        alteracoes_para_processar = list(self.norma_alterada_regex.finditer(janela))
+    else:
+        # para altera / passa a vigorar / dá nova redação etc.,
+        # procura no bloco inteiro da norma e escolhe 1 candidato bom
+        alteracoes_candidatas = list(self.norma_alterada_regex.finditer(bloco))
+        melhor = self._escolher_melhor_alteracao(bloco, c, alteracoes_candidatas)
+        alteracoes_para_processar = [melhor] if melhor else []
                 for alt in alteracoes_para_processar:
                     tipo_alt_raw = alt.group(1).strip()
                     tipo_alt = self.mapa_tipos.get(tipo_alt_raw.upper(), tipo_alt_raw)
