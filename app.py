@@ -2617,203 +2617,203 @@ class ExecutiveProcessor:
         return texto.strip()
 
         def _normalizar_tipo(self, tipo_txt: str) -> str:
-        tipo_txt = (tipo_txt or "").strip().upper()
-        return self.mapa_tipos.get(tipo_txt, tipo_txt)
+            tipo_txt = (tipo_txt or "").strip().upper()
+            return self.mapa_tipos.get(tipo_txt, tipo_txt)
 
-    def _tipo_explicito_apos_comando(self, bloco: str, comando_match) -> str:
-        trecho = bloco[comando_match.end(): comando_match.end() + 120]
+        def _tipo_explicito_apos_comando(self, bloco: str, comando_match) -> str:
+            trecho = bloco[comando_match.end(): comando_match.end() + 120]
 
-        m = re.search(
-            r'\b(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\b',
-            trecho,
-            re.IGNORECASE
-        )
-        if not m:
-            return ""
-
-        return self._normalizar_tipo(m.group(1))
-
-    def _escolher_melhor_alteracao(self, bloco: str, comando_match, candidatos: list):
-        if not candidatos:
-            return None
-
-        pos_comando = comando_match.start()
-        tipo_expresso = self._tipo_explicito_apos_comando(bloco, comando_match)
-
-        candidatos_filtrados = candidatos
-        if tipo_expresso:
-            mesmos_tipos = []
-            for cand in candidatos:
-                tipo_cand = self._normalizar_tipo(cand.group(1))
-                if tipo_cand == tipo_expresso:
-                    mesmos_tipos.append(cand)
-
-            if mesmos_tipos:
-                candidatos_filtrados = mesmos_tipos
-
-        candidatos_depois = [c for c in candidatos_filtrados if c.start() >= pos_comando]
-        if candidatos_depois:
-            candidatos_filtrados = candidatos_depois
-
-        return min(candidatos_filtrados, key=lambda m: abs(m.start() - pos_comando))
-
-    def process_pdf(self) -> pd.DataFrame:
-        start_page_idx, end_page_idx = self.find_relevant_pages()
-        if start_page_idx is None:
-            return pd.DataFrame()
-
-        trechos = []
-
-        try:
-            with pdfplumber.open(io.BytesIO(self.pdf_bytes)) as pdf:
-                for i in range(start_page_idx, end_page_idx):
-                    pagina = pdf.pages[i]
-                    largura, altura = pagina.width, pagina.height
-
-                    for col_num, (x0, x1) in enumerate(
-                        [(0, largura / 2), (largura / 2, largura)],
-                        start=1
-                    ):
-                        coluna = pagina.crop((x0, 0, x1, altura)).extract_text(layout=True) or ""
-                        texto_limpo = coluna.replace("\xa0", " ")
-                        texto_limpo = self._remover_rodape_autenticidade(texto_limpo)
-
-                        if texto_limpo.strip():
-                            trechos.append({
-                                "pagina": i + 1,
-                                "coluna": col_num,
-                                "texto": texto_limpo
-                            })
-
-        except Exception as e:
-            st.error(f"Erro ao extrair texto detalhado do PDF do Executivo: {e}")
-            return pd.DataFrame()
-
-        partes = []
-        offsets = []
-        cursor = 0
-
-        for t in trechos:
-            chunk = t["texto"] + "\n"
-            ini = cursor
-            fim = cursor + len(chunk)
-            offsets.append({
-                "ini": ini,
-                "fim": fim,
-                "pagina": t["pagina"],
-                "coluna": t["coluna"]
-            })
-            partes.append(chunk)
-            cursor = fim
-
-        texto_total = "".join(partes)
-
-        def origem_por_pos(pos: int):
-            for item in offsets:
-                if item["ini"] <= pos < item["fim"]:
-                    return item["pagina"], item["coluna"]
-            return "", ""
-
-        publicados = list(self.norma_regex.finditer(texto_total))
-        if not publicados:
-            return pd.DataFrame()
-
-        dados = []
-
-        for idx, match in enumerate(publicados):
-            tem_asterisco = bool(match.group(1))
-            tipo_raw = match.group(2).strip()
-            tipo = self.mapa_tipos.get(tipo_raw.upper(), tipo_raw)
-            numero = match.group(3).replace(" ", "").replace(".", "")
-            data_texto = (match.group(4) or "").strip()
-
-            data_match = re.search(
-                r'(\d{1,2})(?:º)?\s+DE\s+([A-ZÇÃÁÉÍÓÔÚ]+)\s+DE\s+(\d{4})',
-                data_texto,
+            m = re.search(
+                r'\b(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\b',
+                trecho,
                 re.IGNORECASE
             )
+            if not m:
+                return ""
 
-            if data_match:
-                dia = data_match.group(1).zfill(2)
-                mes_nome = data_match.group(2).upper()
-                mes = meses.get(mes_nome, "")
-                ano = data_match.group(3)
-                sancao = f"{dia}/{mes}/{ano}" if mes else ""
-            else:
-                sancao = ""
+            return self._normalizar_tipo(m.group(1))
 
-            pagina, coluna = origem_por_pos(match.start())
+        def _escolher_melhor_alteracao(self, bloco: str, comando_match, candidatos: list):
+            if not candidatos:
+                return None
 
-            inicio_bloco = match.end()
-            fim_bloco = publicados[idx + 1].start() if idx + 1 < len(publicados) else len(texto_total)
-            bloco = texto_total[inicio_bloco:fim_bloco]
-            bloco = self._cortar_bloco_no_fim(bloco)
+            pos_comando = comando_match.start()
+            tipo_expresso = self._tipo_explicito_apos_comando(bloco, comando_match)
 
-            linha = {
-                "Página": pagina,
-                "Coluna": coluna,
-                "Sanção": sancao,
-                "Tipo": tipo,
-                "Número": numero,
-                "Alterações": "",
-                "Observação": "*Retificação" if tem_asterisco else ""
-            }
-            dados.append(linha)
+            candidatos_filtrados = candidatos
+            if tipo_expresso:
+                mesmos_tipos = []
+                for cand in candidatos:
+                    tipo_cand = self._normalizar_tipo(cand.group(1))
+                    if tipo_cand == tipo_expresso:
+                        mesmos_tipos.append(cand)
 
-            seen_alteracoes = set()
+                if mesmos_tipos:
+                    candidatos_filtrados = mesmos_tipos
 
-            for c in self.comandos_regex.finditer(bloco):
-                command_text = c.group(0).lower()
+            candidatos_depois = [c for c in candidatos_filtrados if c.start() >= pos_comando]
+            if candidatos_depois:
+                candidatos_filtrados = candidatos_depois
 
-                if "revoga" in command_text or "revogado" in command_text:
-                    start_block = max(0, c.start() - 200)
-                    end_block = min(len(bloco), c.end() + 1400)
-                    janela = bloco[start_block:end_block]
-                    alteracoes_para_processar = list(self.norma_alterada_regex.finditer(janela))
+            return min(candidatos_filtrados, key=lambda m: abs(m.start() - pos_comando))
+
+        def process_pdf(self) -> pd.DataFrame:
+            start_page_idx, end_page_idx = self.find_relevant_pages()
+            if start_page_idx is None:
+                return pd.DataFrame()
+
+            trechos = []
+
+            try:
+                with pdfplumber.open(io.BytesIO(self.pdf_bytes)) as pdf:
+                    for i in range(start_page_idx, end_page_idx):
+                        pagina = pdf.pages[i]
+                        largura, altura = pagina.width, pagina.height
+
+                        for col_num, (x0, x1) in enumerate(
+                            [(0, largura / 2), (largura / 2, largura)],
+                            start=1
+                        ):
+                            coluna = pagina.crop((x0, 0, x1, altura)).extract_text(layout=True) or ""
+                            texto_limpo = coluna.replace("\xa0", " ")
+                            texto_limpo = self._remover_rodape_autenticidade(texto_limpo)
+
+                            if texto_limpo.strip():
+                                trechos.append({
+                                    "pagina": i + 1,
+                                    "coluna": col_num,
+                                    "texto": texto_limpo
+                                })
+
+            except Exception as e:
+                st.error(f"Erro ao extrair texto detalhado do PDF do Executivo: {e}")
+                return pd.DataFrame()
+
+            partes = []
+            offsets = []
+            cursor = 0
+
+            for t in trechos:
+                chunk = t["texto"] + "\n"
+                ini = cursor
+                fim = cursor + len(chunk)
+                offsets.append({
+                    "ini": ini,
+                    "fim": fim,
+                    "pagina": t["pagina"],
+                    "coluna": t["coluna"]
+                })
+                partes.append(chunk)
+                cursor = fim
+
+            texto_total = "".join(partes)
+
+            def origem_por_pos(pos: int):
+                for item in offsets:
+                    if item["ini"] <= pos < item["fim"]:
+                        return item["pagina"], item["coluna"]
+                return "", ""
+
+            publicados = list(self.norma_regex.finditer(texto_total))
+            if not publicados:
+                return pd.DataFrame()
+
+            dados = []
+
+            for idx, match in enumerate(publicados):
+                tem_asterisco = bool(match.group(1))
+                tipo_raw = match.group(2).strip()
+                tipo = self.mapa_tipos.get(tipo_raw.upper(), tipo_raw)
+                numero = match.group(3).replace(" ", "").replace(".", "")
+                data_texto = (match.group(4) or "").strip()
+
+                data_match = re.search(
+                    r'(\d{1,2})(?:º)?\s+DE\s+([A-ZÇÃÁÉÍÓÔÚ]+)\s+DE\s+(\d{4})',
+                    data_texto,
+                    re.IGNORECASE
+                )
+
+                if data_match:
+                    dia = data_match.group(1).zfill(2)
+                    mes_nome = data_match.group(2).upper()
+                    mes = meses.get(mes_nome, "")
+                    ano = data_match.group(3)
+                    sancao = f"{dia}/{mes}/{ano}" if mes else ""
                 else:
-                    alteracoes_candidatas = list(self.norma_alterada_regex.finditer(bloco))
-                    melhor = self._escolher_melhor_alteracao(bloco, c, alteracoes_candidatas)
-                    alteracoes_para_processar = [melhor] if melhor else []
+                    sancao = ""
 
-                for alt in alteracoes_para_processar:
-                    tipo_alt_raw = alt.group(1).strip()
-                    tipo_alt = self.mapa_tipos.get(tipo_alt_raw.upper(), tipo_alt_raw)
+                pagina, coluna = origem_por_pos(match.start())
 
-                    num_alt = re.sub(r"[^\d]", "", alt.group(2) or "")
-                    ano_alt = (alt.group(3) or "").strip()
+                inicio_bloco = match.end()
+                fim_bloco = publicados[idx + 1].start() if idx + 1 < len(publicados) else len(texto_total)
+                bloco = texto_total[inicio_bloco:fim_bloco]
+                bloco = self._cortar_bloco_no_fim(bloco)
 
-                    if not ano_alt:
-                        data_texto_alt = alt.group(4) or ""
-                        ano_match = re.search(r"\b(\d{4})\b", data_texto_alt)
-                        if ano_match:
-                            ano_alt = ano_match.group(1)
+                linha = {
+                    "Página": pagina,
+                    "Coluna": coluna,
+                    "Sanção": sancao,
+                    "Tipo": tipo,
+                    "Número": numero,
+                    "Alterações": "",
+                    "Observação": "*Retificação" if tem_asterisco else ""
+                    }
+                dados.append(linha)
 
-                    if tipo_alt == "DEC" and num_alt == "48589" and not ano_alt:
-                        ano_alt = "2023"
+                seen_alteracoes = set()
 
-                    chave_alt = f"{tipo_alt} {num_alt}" + (f" {ano_alt}" if ano_alt else "")
+                for c in self.comandos_regex.finditer(bloco):
+                    command_text = c.group(0).lower()
 
-                    if tipo_alt == linha["Tipo"] and num_alt == linha["Número"]:
-                        continue
-                    if chave_alt in seen_alteracoes:
-                        continue
-
-                    seen_alteracoes.add(chave_alt)
-
-                    if linha["Alterações"] == "":
-                        linha["Alterações"] = chave_alt
+                    if "revoga" in command_text or "revogado" in command_text:
+                        start_block = max(0, c.start() - 200)
+                        end_block = min(len(bloco), c.end() + 1400)
+                        janela = bloco[start_block:end_block]
+                        alteracoes_para_processar = list(self.norma_alterada_regex.finditer(janela))
                     else:
-                        dados.append({
-                            "Página": "",
-                            "Coluna": "",
-                            "Sanção": "",
-                            "Tipo": "",
-                            "Número": "",
-                            "Alterações": chave_alt,
-                            "Observação": ""
-                        })
+                        alteracoes_candidatas = list(self.norma_alterada_regex.finditer(bloco))
+                        melhor = self._escolher_melhor_alteracao(bloco, c, alteracoes_candidatas)
+                        alteracoes_para_processar = [melhor] if melhor else []
 
-        return pd.DataFrame(dados) if dados else pd.DataFrame()
+                    for alt in alteracoes_para_processar:
+                        tipo_alt_raw = alt.group(1).strip()
+                        tipo_alt = self.mapa_tipos.get(tipo_alt_raw.upper(), tipo_alt_raw)
+
+                        num_alt = re.sub(r"[^\d]", "", alt.group(2) or "")
+                        ano_alt = (alt.group(3) or "").strip()
+
+                        if not ano_alt:
+                            data_texto_alt = alt.group(4) or ""
+                            ano_match = re.search(r"\b(\d{4})\b", data_texto_alt)
+                            if ano_match:
+                                ano_alt = ano_match.group(1)
+
+                        if tipo_alt == "DEC" and num_alt == "48589" and not ano_alt:
+                            ano_alt = "2023"
+
+                        chave_alt = f"{tipo_alt} {num_alt}" + (f" {ano_alt}" if ano_alt else "")
+
+                        if tipo_alt == linha["Tipo"] and num_alt == linha["Número"]:
+                            continue
+                        if chave_alt in seen_alteracoes:
+                            continue
+
+                        seen_alteracoes.add(chave_alt)
+
+                        if linha["Alterações"] == "":
+                            linha["Alterações"] = chave_alt
+                        else:
+                            dados.append({
+                                "Página": "",
+                                "Coluna": "",
+                                "Sanção": "",
+                                "Tipo": "",
+                                "Número": "",
+                                "Alterações": chave_alt,
+                                "Observação": ""
+                            })
+
+            return pd.DataFrame(dados) if dados else pd.DataFrame()
 # =========================
 # FUNÇÕES PARA GERADOR DE LINKS
 # =========================
