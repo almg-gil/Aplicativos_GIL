@@ -1531,32 +1531,32 @@ def preencher_aba_modelo(
     df_pareceres: pd.DataFrame
 ):
     # ================= PROPOSIÇÕES =================
-linha_props = encontrar_linha(ws, "PROPOSIÇÕES", 1) + 1
-linhas_props = montar_linhas_proposicoes(
-    data_str, df_props, urls["legislativo"], preencher_vazio_com_traco=True
-)
+    linha_props = encontrar_linha(ws, "PROPOSIÇÕES", 1) + 1
+    linhas_props = montar_linhas_proposicoes(
+        data_str, df_props, urls["legislativo"], preencher_vazio_com_traco=True
+    )
 
-# ================= REQUERIMENTOS =================
-linha_reqs = encontrar_linha(ws, "REQUERIMENTOS", 1) + 1
-linhas_reqs = montar_linhas_requerimentos(
-    data_str, df_reqs, urls["legislativo"], preencher_vazio_com_traco=True
-)
+    # ================= REQUERIMENTOS =================
+    linha_reqs = encontrar_linha(ws, "REQUERIMENTOS", 1) + 1
+    linhas_reqs = montar_linhas_requerimentos(
+        data_str, df_reqs, urls["legislativo"], preencher_vazio_com_traco=True
+    )
 
-# ================= PARECERES =================
-linha_pareceres = encontrar_linha(ws, "PARECERES", 1) + 1
-linhas_pareceres = montar_linhas_pareceres(
-    data_str, df_pareceres, urls["legislativo"], preencher_vazio_com_traco=True
-)
+    # ================= PARECERES =================
+    linha_pareceres = encontrar_linha(ws, "PARECERES", 1) + 1
+    linhas_pareceres = montar_linhas_pareceres(
+        data_str, df_pareceres, urls["legislativo"], preencher_vazio_com_traco=True
+    )
 
-# ================= NORMAS - ADMINISTRATIVO =================
-linha_adm = encontrar_linha(ws, "DIÁRIO ADMINISTRATIVO", 1) + 1
-linhas_adm = montar_linhas_normas(
-    data_str, df_adm, urls["administrativo"], preencher_vazio_com_traco=True
-)
+    # ================= NORMAS - ADMINISTRATIVO =================
+    linha_adm = encontrar_linha(ws, "DIÁRIO ADMINISTRATIVO", 1) + 1
+    linhas_adm = montar_linhas_normas(
+        data_str, df_adm, urls["administrativo"], preencher_vazio_com_traco=True
+    )
 
-# ================= NORMAS - DIÁRIO DA JUSTIÇA =================
-linha_dj = encontrar_linha(ws, "DIÁRIO DA JUSTIÇA", 1) + 1
-linhas_dj = montar_linhas_normas(data_str, pd.DataFrame(), "")
+    # ================= NORMAS - DIÁRIO DA JUSTIÇA =================
+    linha_dj = encontrar_linha(ws, "DIÁRIO DA JUSTIÇA", 1) + 1
+    linhas_dj = montar_linhas_normas(data_str, pd.DataFrame(), "")
     # ================= NORMAS - EXECUTIVO =================
     linha_exec = encontrar_linha(ws, "DIÁRIO DO EXECUTIVO", 1) + 1
     linhas_exec = montar_linhas_normas(data_str, df_exec, urls["executivo_html"])
