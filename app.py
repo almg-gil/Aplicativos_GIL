@@ -2617,8 +2617,8 @@ class ExecutiveProcessor:
         return texto.strip()
 
     def _normalizar_tipo(self, tipo_txt: str) -> str:
-    tipo_txt = (tipo_txt or "").strip().upper()
-    return self.mapa_tipos.get(tipo_txt, tipo_txt)
+        tipo_txt = (tipo_txt or "").strip().upper()
+        return self.mapa_tipos.get(tipo_txt, tipo_txt)
 
 
 def _tipo_explicito_apos_comando(self, bloco: str, comando_match) -> str:
