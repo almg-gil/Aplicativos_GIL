@@ -2690,6 +2690,7 @@ class ExecutiveProcessor:
             return pd.DataFrame()
 
         dados = []
+        dados = []
 
 for t in trechos:
     pagina = t["pagina"]
@@ -2792,6 +2793,10 @@ for t in trechos:
                     })
 
 return pd.DataFrame(dados) if dados else pd.DataFrame()
+
+
+
+
 # =========================
 # FUNÇÕES PARA GERADOR DE LINKS
 # =========================
