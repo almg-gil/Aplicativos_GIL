@@ -2792,10 +2792,7 @@ for t in trechos:
                         "Observação": ""
                     })
 
-return pd.DataFrame(dados) if dados else pd.DataFrame()
-
-
-
+    return pd.DataFrame(dados) if dados else pd.DataFrame()
 
 # =========================
 # FUNÇÕES PARA GERADOR DE LINKS
