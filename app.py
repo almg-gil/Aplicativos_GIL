@@ -2545,7 +2545,7 @@ class ExecutiveProcessor:
             r"(Ficam\s+revogados|Fica\s+revogado|"
             r"Fica\s+acrescentad[oa]|Ficam\s+acrescentad[oa]s|"
             r"Fica\s+alterad[oa]|Ficam\s+alterad[oa]s|"
-            r"Altera|Alteram|"
+            r"\bAltera\b|\bAlteram\b|"
             r"Revoga|Revogam|"
             r"Dá\s+nova\s+redação|Dão\s+nova\s+redação|"
             r"Passa\s+a\s+vigorar|Passam\s+a\s+vigorar|"
