@@ -2693,7 +2693,7 @@ class ExecutiveProcessor:
 
                 # A janela de busca não pode ultrapassar o início da próxima norma.
                 # Se ultrapassar, uma norma seguinte pode ser capturada como "alteração"
-                 # da norma anterior, como aconteceu com DEC 49218 -> DNE 409.
+                # da norma anterior, como aconteceu com DEC 49218 -> DNE 409.
                 raio_antes = 350
                 raio_depois = 350
 
