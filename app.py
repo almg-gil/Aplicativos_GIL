@@ -21,6 +21,10 @@ import tempfile
 import shutil
 import gspread
 from google.oauth2.service_account import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+from zoneinfo import ZoneInfo
+import unicodedata
 
 # =========================
 # CONFIG GOOGLE SHEETS
@@ -100,19 +104,455 @@ meses = {
 # =========================
 # GOOGLE SHEETS
 # =========================
-def conectar_gsheet():
-    creds_dict = st.secrets["gcp_service_account"]
+TIMEZONE_PADRAO = "America/Sao_Paulo"
+COLUNAS_RESPONSAVEIS = (7, 8, 14, 15)  # G, H, N, O
+PADRAO_AFASTAMENTO = re.compile(r"^\s*(licen[cç]a|f[eé]rias)\s*[:\-]\s*(.+?)\s*$", re.IGNORECASE)
 
+GRUPOS_EQUIPE = {
+    "BIBLIOTECARIO": ["TIAGO", "PAULO", "CIRLENE", "SILVANA", "ROBSON", "MARCIA"],
+    "BIBLIOTECARIO_TARDE": ["ROBSON", "SILVANA"],
+    "BIBLIOTECARIO_EXEC": ["TIAGO", "PAULO", "CIRLENE", "MARCIA"],
+    "ESTAGIARIO": ["ISABELA", "NÉLIA"],
+    "TECNICO": ["ISADORA", "CLÉLIA"],
+}
+
+REGRAS_TAREFA = {
+    "implantacao_normas_dne": {
+        "grupos": ["ESTAGIARIO", "TECNICO"],
+        "excluir": ["CLÉLIA", "MARCIA"],
+    },
+    "implantacao_normas_nao_dne": {
+        "grupos": ["ESTAGIARIO", "TECNICO", "BIBLIOTECARIO_EXEC"],
+        "excluir": ["PAULO", "CLÉLIA", "MARCIA"],
+    },
+    "revisao_normas": {
+        "grupos": ["BIBLIOTECARIO"],
+        "excluir": ["CLÉLIA", "MARCIA"],
+    },
+
+    "execucao_proposicoes_nao_up": {
+        "grupos": ["BIBLIOTECARIO_EXEC", "ESTAGIARIO", "TECNICO"],
+        "excluir": ["CLÉLIA"],
+    },
+    "execucao_proposicoes_up": {
+        "incluir": ["CLÉLIA", "ISADORA"],
+    },
+    "revisao_proposicoes": {
+        "grupos": ["BIBLIOTECARIO"],
+    },
+
+    "execucao_requerimentos": {
+        "grupos": ["BIBLIOTECARIO_EXEC", "ESTAGIARIO", "TECNICO"],
+    },
+    "revisao_requerimentos": {
+        "grupos": ["BIBLIOTECARIO"],
+    },
+
+    "execucao_pareceres": {
+        "grupos": ["BIBLIOTECARIO_EXEC", "ESTAGIARIO", "TECNICO"],
+        "excluir": ["CLÉLIA"],
+    },
+    "revisao_pareceres": {
+        "grupos": ["BIBLIOTECARIO"],
+    },
+}
+ROTULOS_TAREFA = {
+    "implantacao_normas_dne": "Implantação de normas DNE",
+    "implantacao_normas_nao_dne": "Implantação de normas não DNE",
+    "revisao_normas": "Revisão de normas",
+    "execucao_proposicoes_nao_up": "Execução de proposições não UP",
+    "execucao_proposicoes_up": "Execução de proposições UP",
+    "revisao_proposicoes": "Revisão de proposições",
+    "execucao_requerimentos": "Execução de requerimentos",
+    "revisao_requerimentos": "Revisão de requerimentos",
+    "execucao_pareceres": "Execução de pareceres",
+    "revisao_pareceres": "Revisão de pareceres",
+}
+
+
+def remover_acentos(texto: str) -> str:
+    texto = str(texto or "")
+    return "".join(
+        ch for ch in unicodedata.normalize("NFD", texto)
+        if unicodedata.category(ch) != "Mn"
+    )
+
+
+def nome_planilha(nome: str) -> str:
+    return re.sub(r"\s+", " ", str(nome or "").strip()).upper()
+
+
+def normalizar_nome_chave(nome: str) -> str:
+    return remover_acentos(nome_planilha(nome))
+
+
+def construir_mapa_nomes_equipe() -> dict:
+    mapa = {}
+    for pessoas in GRUPOS_EQUIPE.values():
+        for pessoa in pessoas:
+            mapa[normalizar_nome_chave(pessoa)] = nome_planilha(pessoa)
+    return mapa
+
+
+MAPA_NOMES_EQUIPE = construir_mapa_nomes_equipe()
+
+
+def obter_google_credentials():
+    creds_dict = st.secrets["gcp_service_account"]
     creds = Credentials.from_service_account_info(
         creds_dict,
         scopes=[
             "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
+            "https://www.googleapis.com/auth/drive",
+            "https://www.googleapis.com/auth/calendar.readonly",
         ]
     )
 
+    usuario_impersonado = st.secrets.get("calendar_impersonate_user", "")
+    if usuario_impersonado:
+        try:
+            creds = creds.with_subject(usuario_impersonado)
+        except Exception:
+            pass
+
+    return creds
+
+
+def conectar_gsheet():
+    creds = obter_google_credentials()
     client = gspread.authorize(creds)
     return client.open_by_url(PLANILHA_URL)
+
+
+@st.cache_resource
+def conectar_calendar_service():
+    creds = obter_google_credentials()
+    return build("calendar", "v3", credentials=creds, cache_discovery=False)
+
+
+def obter_calendarios_afastamento() -> list[str]:
+    calendar_ids = st.secrets.get("calendar_ids_afastamentos", [])
+    if not calendar_ids:
+        calendar_ids = st.secrets.get("CALENDARIOS_AFASTAMENTOS", [])
+
+    if isinstance(calendar_ids, str):
+        calendar_ids = [x.strip() for x in calendar_ids.split(",") if x.strip()]
+
+    return [str(x).strip() for x in calendar_ids if str(x).strip()]
+
+
+def extrair_nome_evento_afastamento(summary: str) -> str:
+    m = PADRAO_AFASTAMENTO.match(summary or "")
+    if not m:
+        return ""
+
+    nome_raw = m.group(2).strip()
+    nome_raw = re.sub(r"\s*\(.*?\)\s*$", "", nome_raw).strip()
+    return MAPA_NOMES_EQUIPE.get(normalizar_nome_chave(nome_raw), "")
+
+
+def evento_atinge_data(evento: dict, data_ref: date, tz: ZoneInfo) -> bool:
+    start = evento.get("start", {})
+    end = evento.get("end", {})
+
+    if "date" in start and "date" in end:
+        inicio = date.fromisoformat(start["date"])
+        fim_exclusivo = date.fromisoformat(end["date"])
+        return inicio <= data_ref < fim_exclusivo
+
+    start_dt_raw = start.get("dateTime")
+    end_dt_raw = end.get("dateTime")
+    if not start_dt_raw or not end_dt_raw:
+        return False
+
+    inicio = datetime.fromisoformat(start_dt_raw.replace("Z", "+00:00")).astimezone(tz)
+    fim = datetime.fromisoformat(end_dt_raw.replace("Z", "+00:00")).astimezone(tz)
+    dia_inicio = datetime.combine(data_ref, datetime.min.time(), tzinfo=tz)
+    dia_fim = dia_inicio + timedelta(days=1)
+    return inicio < dia_fim and fim > dia_inicio
+
+
+def listar_indisponiveis_calendar(data_ref: date) -> tuple[set[str], str]:
+    calendar_ids = obter_calendarios_afastamento()
+    if not calendar_ids:
+        return set(), "Integração com Google Calendar desativada: configure 'calendar_ids_afastamentos' no st.secrets para bloquear Licença/Férias."
+
+    try:
+        service = conectar_calendar_service()
+    except Exception as e:
+        return set(), f"Não foi possível conectar ao Google Calendar: {e}"
+
+    tz = ZoneInfo(TIMEZONE_PADRAO)
+    consulta_inicio = datetime.combine(data_ref - timedelta(days=31), datetime.min.time(), tzinfo=tz)
+    consulta_fim = datetime.combine(data_ref + timedelta(days=32), datetime.min.time(), tzinfo=tz)
+
+    indisponiveis = set()
+
+    try:
+        for calendar_id in calendar_ids:
+            page_token = None
+            while True:
+                resposta = service.events().list(
+                    calendarId=calendar_id,
+                    timeMin=consulta_inicio.isoformat(),
+                    timeMax=consulta_fim.isoformat(),
+                    showDeleted=False,
+                    singleEvents=False,
+                    maxResults=2500,
+                    pageToken=page_token,
+                ).execute()
+
+                for evento in resposta.get("items", []):
+                    if not evento_atinge_data(evento, data_ref, tz):
+                        continue
+
+                    nome = extrair_nome_evento_afastamento(evento.get("summary", ""))
+                    if nome:
+                        indisponiveis.add(nome)
+
+                page_token = resposta.get("nextPageToken")
+                if not page_token:
+                    break
+
+    except HttpError as e:
+        return set(), f"Erro ao consultar o Google Calendar: {e}"
+    except Exception as e:
+        return set(), f"Falha ao consultar afastamentos no Google Calendar: {e}"
+
+    return indisponiveis, ""
+
+
+def candidatos_para_tarefa(chave_tarefa: str, indisponiveis: set[str] | None = None) -> list[str]:
+    regra = REGRAS_TAREFA.get(chave_tarefa, {})
+    indisponiveis = {nome_planilha(x) for x in (indisponiveis or set())}
+    excluir = {nome_planilha(x) for x in regra.get("excluir", [])}
+
+    candidatos = []
+    vistos = set()
+
+    for grupo in regra.get("grupos", []):
+        for pessoa in GRUPOS_EQUIPE.get(grupo, []):
+            pessoa_fmt = nome_planilha(pessoa)
+            if not pessoa_fmt or pessoa_fmt in vistos or pessoa_fmt in excluir or pessoa_fmt in indisponiveis:
+                continue
+            vistos.add(pessoa_fmt)
+            candidatos.append(pessoa_fmt)
+
+    for pessoa in regra.get("incluir", []):
+        pessoa_fmt = nome_planilha(pessoa)
+        if not pessoa_fmt or pessoa_fmt in vistos or pessoa_fmt in excluir or pessoa_fmt in indisponiveis:
+            continue
+        vistos.add(pessoa_fmt)
+        candidatos.append(pessoa_fmt)
+
+    return candidatos
+
+def pessoa_pertence_ao_grupo(nome: str, grupo: str) -> bool:
+    nome_fmt = nome_planilha(nome)
+    return nome_fmt in {nome_planilha(p) for p in GRUPOS_EQUIPE.get(grupo, [])}
+
+
+def inicializar_df_responsaveis(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None:
+        return pd.DataFrame()
+
+    df = df.copy()
+
+    if "ResponsavelExecucao" not in df.columns:
+        df["ResponsavelExecucao"] = ""
+
+    if "ResponsavelRevisao" not in df.columns:
+        df["ResponsavelRevisao"] = ""
+
+    return df
+
+
+def distribuir_para_posicoes(total_linhas: int, posicoes: list[int], pessoas: list[str]) -> dict[int, str]:
+    distribuicao = distribuir_em_blocos(len(posicoes), pessoas)
+    return {pos: nome for pos, nome in zip(posicoes, distribuicao)}
+
+
+def eh_norma_dne(r: pd.Series) -> bool:
+    return nome_planilha(r.get("Tipo", "")) == "DNE"
+
+
+def eh_proposicao_up(r: pd.Series) -> bool:
+    valor = r.get("Observação", r.get("Categoria", ""))
+    return nome_planilha(valor) == "UP"
+
+REQ_SEM_TRATAMENTO = {
+    "VOTO DE CONGRATULAÇÕES",
+    "MANIFESTAÇÃO DE PESAR",
+    "MANIFESTAÇÃO DE REPÚDIO",
+    "MOÇÃO DE APLAUSO",
+    "MANIFESTAÇÃO DE APOIO",
+    "APLAUSO",
+}
+
+
+def requerimento_sem_tratamento(r: pd.Series) -> bool:
+    valor = r.get("Observação", r.get("Classificação", ""))
+    return nome_planilha(valor) in REQ_SEM_TRATAMENTO
+
+
+def distribuir_revisores_sem_mesma_pessoa(execucoes: list[str], candidatos_rev: list[str]) -> list[str]:
+    execucoes = [nome_planilha(x) for x in execucoes]
+    candidatos_rev = [nome_planilha(x) for x in candidatos_rev if str(x).strip()]
+
+    if not execucoes:
+        return []
+    if not candidatos_rev:
+        return [""] * len(execucoes)
+
+    revisao_base = distribuir_em_blocos(len(execucoes), candidatos_rev)
+    uso = {p: 0 for p in candidatos_rev}
+    revisoes = []
+
+    for i, executor in enumerate(execucoes):
+        preferido = revisao_base[i] if i < len(revisao_base) else ""
+
+        if preferido and preferido != executor:
+            escolhido = preferido
+        else:
+            opcoes = [p for p in candidatos_rev if p != executor]
+
+            if not opcoes:
+                escolhido = ""
+            else:
+                menor_uso = min(uso[p] for p in opcoes)
+                escolhido = next(
+                    p for p in candidatos_rev
+                    if p in opcoes and uso[p] == menor_uso
+                )
+
+        revisoes.append(escolhido)
+        if escolhido:
+            uso[escolhido] += 1
+
+    return revisoes
+
+
+class DistribuidorRoundRobin:
+    def __init__(self):
+        self._indices = {}
+
+    def proximo(self, chave: str, candidatos: list[str]) -> str:
+        if not chave or not candidatos:
+            return ""
+
+        idx_atual = self._indices.get(chave, 0)
+        escolhido = candidatos[idx_atual % len(candidatos)]
+        self._indices[chave] = idx_atual + 1
+        return escolhido
+
+
+def linha_continuacao_norma(r: pd.Series) -> bool:
+    campos_base = [
+        r.get("Página", ""),
+        r.get("Coluna", ""),
+        r.get("Sanção", ""),
+        r.get("Tipo", ""),
+        r.get("Número", ""),
+    ]
+    return all(str(v).strip() == "" for v in campos_base) and str(r.get("Alterações", "")).strip() != ""
+
+
+def distribuir_responsaveis_dataframe(
+    df: pd.DataFrame,
+    chave_execucao: str = "",
+    chave_revisao: str = "",
+    indisponiveis: set[str] | None = None,
+    distribuidor: DistribuidorRoundRobin | None = None,
+    replicar_em_linhas_continuacao: bool = False,
+) -> pd.DataFrame:
+    if df is None:
+        return pd.DataFrame()
+
+    df = df.copy()
+    if df.empty:
+        if "ResponsavelExecucao" not in df.columns:
+            df["ResponsavelExecucao"] = ""
+        if "ResponsavelRevisao" not in df.columns:
+            df["ResponsavelRevisao"] = ""
+        return df
+
+    distribuidor = distribuidor or DistribuidorRoundRobin()
+    candidatos_exec = candidatos_para_tarefa(chave_execucao, indisponiveis) if chave_execucao else []
+    candidatos_rev = candidatos_para_tarefa(chave_revisao, indisponiveis) if chave_revisao else []
+
+    execucoes = []
+    revisoes = []
+    ultimo_exec = ""
+    ultimo_rev = ""
+
+    for _, r in df.iterrows():
+        if replicar_em_linhas_continuacao and linha_continuacao_norma(r):
+            execucoes.append(ultimo_exec)
+            revisoes.append(ultimo_rev)
+            continue
+
+        ultimo_exec = distribuidor.proximo(chave_execucao, candidatos_exec) if chave_execucao else ""
+        ultimo_rev = distribuidor.proximo(chave_revisao, candidatos_rev) if chave_revisao else ""
+        execucoes.append(ultimo_exec)
+        revisoes.append(ultimo_rev)
+
+    df["ResponsavelExecucao"] = execucoes
+    df["ResponsavelRevisao"] = revisoes
+    return df
+
+
+def distribuir_tarefas_extraidas_em_blocos(
+    df_exec: pd.DataFrame,
+    df_adm: pd.DataFrame,
+    df_leg_normas: pd.DataFrame,
+    df_props: pd.DataFrame,
+    df_reqs: pd.DataFrame,
+    df_pareceres: pd.DataFrame,
+    indisponiveis: set[str] | None = None,
+):
+    df_exec = atribuir_responsaveis_normas(
+        df_exec,
+        indisponiveis=indisponiveis,
+        replicar_em_linhas_continuacao=True,
+    )
+
+    df_adm = atribuir_responsaveis_normas(
+        df_adm,
+        indisponiveis=indisponiveis,
+        replicar_em_linhas_continuacao=True,
+    )
+
+    df_leg_normas = atribuir_responsaveis_normas(
+        df_leg_normas,
+        indisponiveis=indisponiveis,
+        replicar_em_linhas_continuacao=True,
+    )
+
+    df_props = atribuir_responsaveis_proposicoes(
+        df_props,
+        indisponiveis=indisponiveis,
+    )
+
+    df_reqs = atribuir_responsaveis_requerimentos(
+        df_reqs,
+        indisponiveis=indisponiveis,
+    )
+
+    df_pareceres = atribuir_responsaveis_pareceres(
+        df_pareceres,
+        indisponiveis=indisponiveis,
+    )
+
+    return df_exec, df_adm, df_leg_normas, df_props, df_reqs, df_pareceres
+
+
+def validar_pools_distribuicao(indisponiveis: set[str] | None = None) -> list[str]:
+    avisos = []
+    for chave, rotulo in ROTULOS_TAREFA.items():
+        candidatos = candidatos_para_tarefa(chave, indisponiveis)
+        if not candidatos:
+            avisos.append(f"Sem pessoas disponíveis para {rotulo}.")
+    return avisos
 
 
 def nome_aba_data(data_str: str) -> str:
@@ -347,6 +787,75 @@ def escrever_celula(ws, celula: str, valor):
     ws.update(celula, [[valor]], value_input_option="USER_ENTERED")
 
 
+def desmesclar_intervalo(ws, linha_inicial: int, qtd_linhas: int, col_inicial: int, col_final: int):
+    if qtd_linhas <= 0:
+        return
+
+    faixa_total = {
+        "sheetId": ws.id,
+        "startRowIndex": linha_inicial - 1,
+        "endRowIndex": linha_inicial + qtd_linhas - 1,
+        "startColumnIndex": col_inicial - 1,
+        "endColumnIndex": col_final,
+    }
+
+    try:
+        ws.spreadsheet.batch_update({
+            "requests": [
+                {
+                    "unmergeCells": {
+                        "range": faixa_total
+                    }
+                }
+            ]
+        })
+    except Exception:
+        pass
+
+
+def aplicar_cor_responsaveis(ws, linha_inicial: int, linhas: list[list], colunas=COLUNAS_RESPONSAVEIS):
+    if not linhas:
+        return
+
+    requests_batch = []
+    for idx_linha, linha in enumerate(linhas, start=linha_inicial):
+        for col in colunas:
+            if col > len(linha):
+                continue
+
+            valor = str(linha[col - 1]).strip()
+            if not valor or valor == "-":
+                continue
+
+            requests_batch.append({
+                "repeatCell": {
+                    "range": {
+                        "sheetId": ws.id,
+                        "startRowIndex": idx_linha - 1,
+                        "endRowIndex": idx_linha,
+                        "startColumnIndex": col - 1,
+                        "endColumnIndex": col,
+                    },
+                    "cell": {
+                        "userEnteredFormat": {
+                            "textFormat": {
+                                "foregroundColor": {
+                                    "red": 1.0,
+                                    "green": 0.00,
+                                    "blue": 0.00,
+                                },
+                                "bold": True,
+                            }
+                        }
+                    },
+                    "fields": "userEnteredFormat.textFormat.foregroundColor,userEnteredFormat.textFormat.bold"
+                }
+            })
+
+    if requests_batch:
+        ws.spreadsheet.batch_update({"requests": requests_batch})
+
+
 def contar_alteracoes(df: pd.DataFrame) -> int:
     if df is None or df.empty or "Alterações" not in df.columns:
         return 0
@@ -358,6 +867,45 @@ def contar_alteracoes(df: pd.DataFrame) -> int:
         .ne("")
         .sum()
     )
+
+def obter_quantidade_e_vides(alteracao):
+    texto = str(alteracao or "").strip().upper()
+
+    if not texto:
+        return "-", "-"
+
+    if texto == "DEC 48589 2023":
+        return 0, 1
+
+    return 1, 1
+
+
+def contar_normas_principais(df: pd.DataFrame) -> int:
+    if df is None or df.empty:
+        return 0
+
+    return int(
+        (~df.apply(linha_continuacao_norma, axis=1)).sum()
+    )
+
+
+def somar_quantidade_vides(df: pd.DataFrame) -> tuple[int, int]:
+    if df is None or df.empty or "Alterações" not in df.columns:
+        return 0, 0
+
+    total_quantidade = 0
+    total_vides = 0
+
+    for alteracao in df["Alterações"].fillna("").astype(str):
+        qtd, vides = obter_quantidade_e_vides(alteracao)
+
+        if qtd != "-":
+            total_quantidade += int(qtd)
+
+        if vides != "-":
+            total_vides += int(vides)
+
+    return total_quantidade, total_vides
 
 
 # =========================
@@ -597,11 +1145,17 @@ def montar_link_numero_proposicao(tipo: str, numero, ano) -> str:
 
     return f'=HIPERLINK("{url_esc}";"{numero_txt_esc}")'
 
-
-def montar_linhas_normas(data_str: str, df: pd.DataFrame, url_diario: str = "") -> list[list]:
+def montar_linhas_normas(
+    data_str: str,
+    df: pd.DataFrame,
+    url_diario: str = "",
+    preencher_vazio_com_traco: bool = False
+) -> list[list]:
     link_data = montar_link_data(data_str, url_diario)
 
     if df is None or df.empty:
+        if preencher_vazio_com_traco:
+            return [[link_data, "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"]]
         return [[link_data, "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]]
 
     df = df.fillna("")
@@ -614,39 +1168,75 @@ def montar_linhas_normas(data_str: str, df: pd.DataFrame, url_diario: str = "") 
             sancao=r.get("Sanção", "")
         )
 
-        alteracao_link = montar_link_alteracao_norma(
-            r.get("Alterações", "")
-        )
+        alteracao = r.get("Alterações", "")
+        alteracao_link = montar_link_alteracao_norma(alteracao)
 
-        linhas.append([
-            link_data if i == 0 else "",
-            r.get("Página", ""),
-            r.get("Coluna", ""),
-            r.get("Sanção", ""),
-            r.get("Tipo", ""),
-            numero_link,
-            "",
-            "",
-            "",
-            alteracao_link,
-            "",
-            "",
-            "",
-            "",
-            "",
-            r.get("Observação", "")
-        ])
+        responsavel_exec = nome_planilha(r.get("ResponsavelExecucao", ""))
+        responsavel_rev = nome_planilha(r.get("ResponsavelRevisao", ""))
+
+        eh_continuacao = linha_continuacao_norma(r)
+        tem_alteracao = bool(str(alteracao).strip())
+
+        quantidade, vides = obter_quantidade_e_vides(alteracao)
+
+        if eh_continuacao:
+            linhas.append([
+                link_data if i == 0 else "",
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                quantidade,
+                alteracao_link,
+                vides,
+                responsavel_exec,
+                responsavel_rev,
+                "-",
+                "-",
+                r.get("Observação", "")
+            ])
+        else:
+            linhas.append([
+                link_data if i == 0 else "",
+                r.get("Página", ""),
+                r.get("Coluna", ""),
+                r.get("Sanção", ""),
+                r.get("Tipo", ""),
+                numero_link,
+                responsavel_exec,
+                responsavel_rev,
+                quantidade if tem_alteracao else "-",
+                alteracao_link if tem_alteracao else "-",
+                vides if tem_alteracao else "-",
+                responsavel_exec if tem_alteracao else "-",
+                responsavel_rev if tem_alteracao else "-",
+                responsavel_exec,
+                responsavel_rev,
+                r.get("Observação", "")
+            ])
+
     return linhas
 
 
-def montar_linhas_proposicoes(data_str: str, df: pd.DataFrame, url_diario: str = "") -> list[list]:
+def montar_linhas_proposicoes(
+    data_str: str,
+    df: pd.DataFrame,
+    url_diario: str = "",
+    preencher_vazio_com_traco: bool = False
+) -> list[list]:
     link_data = montar_link_data(data_str, url_diario)
 
     if df is None or df.empty:
+        if preencher_vazio_com_traco:
+            return [[link_data, "-", "-", "-", "-", "-", "-"]]
         return [[link_data, "", "", "", "", "", ""]]
 
     df = df.fillna("")
     linhas = []
+
     for i, (_, r) in enumerate(df.iterrows()):
         numero_link = montar_link_numero_proposicao(
             tipo=r.get("Tipo", ""),
@@ -654,26 +1244,41 @@ def montar_linhas_proposicoes(data_str: str, df: pd.DataFrame, url_diario: str =
             ano=r.get("Ano", "")
         )
 
+        responsavel_exec = nome_planilha(r.get("ResponsavelExecucao", ""))
+        responsavel_rev = nome_planilha(r.get("ResponsavelRevisao", ""))
+
+        observacao = r.get("Observação", r.get("Categoria", ""))
+        if nome_planilha(observacao) == "UP":
+            observacao = ""
+
         linhas.append([
             link_data if i == 0 else "",
             r.get("Tipo", ""),
             numero_link,
             r.get("Ano", ""),
-            "",
-            "",
-            r.get("Observação", r.get("Categoria", ""))
+            responsavel_exec,
+            responsavel_rev,
+            observacao
         ])
     return linhas
 
 
-def montar_linhas_requerimentos(data_str: str, df: pd.DataFrame, url_diario: str = "") -> list[list]:
+def montar_linhas_requerimentos(
+    data_str: str,
+    df: pd.DataFrame,
+    url_diario: str = "",
+    preencher_vazio_com_traco: bool = False
+) -> list[list]:
     link_data = montar_link_data(data_str, url_diario)
 
     if df is None or df.empty:
+        if preencher_vazio_com_traco:
+            return [[link_data, "-", "-", "-", "-", "-", "-"]]
         return [[link_data, "", "", "", "", "", ""]]
 
     df = df.fillna("")
     linhas = []
+
     for i, (_, r) in enumerate(df.iterrows()):
         numero_link = montar_link_numero_proposicao(
             tipo=r.get("Tipo", ""),
@@ -681,32 +1286,47 @@ def montar_linhas_requerimentos(data_str: str, df: pd.DataFrame, url_diario: str
             ano=r.get("Ano", "")
         )
 
+        responsavel_exec = nome_planilha(r.get("ResponsavelExecucao", ""))
+        responsavel_rev = nome_planilha(r.get("ResponsavelRevisao", ""))
+
         linhas.append([
             link_data if i == 0 else "",
             r.get("Tipo", ""),
             numero_link,
             r.get("Ano", ""),
-            "",
-            "",
+            responsavel_exec,
+            responsavel_rev,
             r.get("Observação", r.get("Classificação", ""))
         ])
+
     return linhas
 
 
-def montar_linhas_pareceres(data_str: str, df: pd.DataFrame, url_diario: str = "") -> list[list]:
+def montar_linhas_pareceres(
+    data_str: str,
+    df: pd.DataFrame,
+    url_diario: str = "",
+    preencher_vazio_com_traco: bool = False
+) -> list[list]:
     link_data = montar_link_data(data_str, url_diario)
 
     if df is None or df.empty:
+        if preencher_vazio_com_traco:
+            return [[link_data, "-", "-", "-", "-", "-", "-", "-"]]
         return [[link_data, "", "", "", "", "", "", ""]]
 
     df = df.fillna("")
     linhas = []
+
     for i, (_, r) in enumerate(df.iterrows()):
         numero_link = montar_link_numero_proposicao(
             tipo=r.get("Tipo", ""),
             numero=r.get("Número", ""),
             ano=r.get("Ano", "")
         )
+
+        responsavel_exec = nome_planilha(r.get("ResponsavelExecucao", ""))
+        responsavel_rev = nome_planilha(r.get("ResponsavelRevisao", ""))
 
         linhas.append([
             link_data if i == 0 else "",
@@ -714,12 +1334,190 @@ def montar_linhas_pareceres(data_str: str, df: pd.DataFrame, url_diario: str = "
             numero_link,
             r.get("Ano", ""),
             r.get("Subtipo", ""),
-            "",
-            "",
+            responsavel_exec,
+            responsavel_rev,
             r.get("Observação", "")
         ])
     return linhas
 
+def distribuir_em_blocos(qtd: int, pessoas: list[str]) -> list[str]:
+    pessoas = [nome_planilha(p) for p in pessoas if str(p).strip()]
+    if qtd <= 0:
+        return []
+    if not pessoas:
+        return [""] * qtd
+
+    base, resto = divmod(qtd, len(pessoas))
+    resultado = []
+
+    for i, pessoa in enumerate(pessoas):
+        repetir = base + (1 if i < resto else 0)
+        resultado.extend([pessoa] * repetir)
+
+    return resultado
+
+
+def atribuir_responsaveis_normas(
+    df: pd.DataFrame,
+    indisponiveis: set[str] | None = None,
+    replicar_em_linhas_continuacao: bool = True,
+) -> pd.DataFrame:
+    df = inicializar_df_responsaveis(df)
+    if df.empty:
+        return df
+
+    cand_exec_dne = candidatos_para_tarefa("implantacao_normas_dne", indisponiveis)
+    cand_exec_nao_dne = candidatos_para_tarefa("implantacao_normas_nao_dne", indisponiveis)
+    cand_rev = candidatos_para_tarefa("revisao_normas", indisponiveis)
+
+    mascara_cont = []
+    pos_principais = []
+    pos_dne = []
+    pos_nao_dne = []
+
+    for pos, (_, r) in enumerate(df.iterrows()):
+        cont = replicar_em_linhas_continuacao and linha_continuacao_norma(r)
+        mascara_cont.append(cont)
+
+        if cont:
+            continue
+
+        pos_principais.append(pos)
+        if eh_norma_dne(r):
+            pos_dne.append(pos)
+        else:
+            pos_nao_dne.append(pos)
+
+    mapa_exec_dne = distribuir_para_posicoes(len(df), pos_dne, cand_exec_dne)
+    mapa_exec_nao_dne = distribuir_para_posicoes(len(df), pos_nao_dne, cand_exec_nao_dne)
+    mapa_rev = distribuir_para_posicoes(len(df), pos_principais, cand_rev)
+
+    execucoes = []
+    revisoes = []
+    ultimo_exec = ""
+    ultimo_rev = ""
+
+    for pos, cont in enumerate(mascara_cont):
+        if cont:
+            execucoes.append(ultimo_exec)
+            revisoes.append(ultimo_rev)
+            continue
+
+        ultimo_exec = mapa_exec_dne.get(pos, mapa_exec_nao_dne.get(pos, ""))
+        ultimo_rev = mapa_rev.get(pos, "")
+
+        execucoes.append(ultimo_exec)
+        revisoes.append(ultimo_rev)
+
+    df["ResponsavelExecucao"] = execucoes
+    df["ResponsavelRevisao"] = revisoes
+    return df
+
+
+def atribuir_responsaveis_proposicoes(
+    df: pd.DataFrame,
+    indisponiveis: set[str] | None = None,
+) -> pd.DataFrame:
+    df = inicializar_df_responsaveis(df)
+    if df.empty:
+        return df
+
+    cand_exec_up = candidatos_para_tarefa("execucao_proposicoes_up", indisponiveis)
+    cand_exec_nao_up = candidatos_para_tarefa("execucao_proposicoes_nao_up", indisponiveis)
+    cand_rev = candidatos_para_tarefa("revisao_proposicoes", indisponiveis)
+
+    pos_up = []
+    pos_nao_up = []
+
+    for pos, (_, r) in enumerate(df.iterrows()):
+        if eh_proposicao_up(r):
+            pos_up.append(pos)
+        else:
+            pos_nao_up.append(pos)
+
+    mapa_exec_up = distribuir_para_posicoes(len(df), pos_up, cand_exec_up)
+    mapa_exec_nao_up = distribuir_para_posicoes(len(df), pos_nao_up, cand_exec_nao_up)
+
+    execucoes = []
+    for pos in range(len(df)):
+        execucoes.append(mapa_exec_up.get(pos, mapa_exec_nao_up.get(pos, "")))
+
+    revisoes = distribuir_revisores_sem_mesma_pessoa(execucoes, cand_rev)
+
+    df["ResponsavelExecucao"] = execucoes
+    df["ResponsavelRevisao"] = revisoes
+    return df
+
+
+def atribuir_responsaveis_requerimentos(
+    df: pd.DataFrame,
+    indisponiveis: set[str] | None = None,
+) -> pd.DataFrame:
+    df = inicializar_df_responsaveis(df)
+    if df.empty:
+        return df
+
+    cand_exec = candidatos_para_tarefa("execucao_requerimentos", indisponiveis)
+    cand_rev = candidatos_para_tarefa("revisao_requerimentos", indisponiveis)
+
+    execucoes = [""] * len(df)
+    revisoes = [""] * len(df)
+
+    pos_sem_tratamento = []
+    pos_normais = []
+
+    for pos, (_, r) in enumerate(df.iterrows()):
+        if requerimento_sem_tratamento(r):
+            pos_sem_tratamento.append(pos)
+        else:
+            pos_normais.append(pos)
+
+    for pos in pos_sem_tratamento:
+        execucoes[pos] = "-"
+        revisoes[pos] = "-"
+
+    mapa_exec = distribuir_para_posicoes(len(df), pos_normais, cand_exec)
+
+    posicoes_com_revisao = []
+    execucoes_com_revisao = []
+
+    for pos in pos_normais:
+        executor = nome_planilha(mapa_exec.get(pos, ""))
+        execucoes[pos] = executor
+
+        if pessoa_pertence_ao_grupo(executor, "BIBLIOTECARIO"):
+            revisoes[pos] = "-"
+        else:
+            posicoes_com_revisao.append(pos)
+            execucoes_com_revisao.append(executor)
+
+    revisores_distribuidos = distribuir_revisores_sem_mesma_pessoa(execucoes_com_revisao, cand_rev)
+
+    for pos, revisor in zip(posicoes_com_revisao, revisores_distribuidos):
+        revisoes[pos] = revisor
+
+    df["ResponsavelExecucao"] = execucoes
+    df["ResponsavelRevisao"] = revisoes
+    return df
+
+
+def atribuir_responsaveis_pareceres(
+    df: pd.DataFrame,
+    indisponiveis: set[str] | None = None,
+) -> pd.DataFrame:
+    df = inicializar_df_responsaveis(df)
+    if df.empty:
+        return df
+
+    cand_exec = candidatos_para_tarefa("execucao_pareceres", indisponiveis)
+    cand_rev = candidatos_para_tarefa("revisao_pareceres", indisponiveis)
+
+    execucoes = distribuir_em_blocos(len(df), cand_exec)
+    revisoes = distribuir_revisores_sem_mesma_pessoa(execucoes, cand_rev)
+
+    df["ResponsavelExecucao"] = execucoes
+    df["ResponsavelRevisao"] = revisoes
+    return df
 
 def preencher_aba_modelo(
     ws,
@@ -732,66 +1530,86 @@ def preencher_aba_modelo(
     df_reqs: pd.DataFrame,
     df_pareceres: pd.DataFrame
 ):
-    linha_pareceres = encontrar_linha(ws, "PARECERES", 1) + 1
-    linhas_pareceres = montar_linhas_pareceres(data_str, df_pareceres, urls["legislativo"])
-    escrever_bloco(ws, linha_pareceres, linhas_pareceres)
-    mesclar_linhas_intervalo(ws, linha_pareceres, len(linhas_pareceres), 8, 15)
-
-    linha_reqs = encontrar_linha(ws, "REQUERIMENTOS", 1) + 1
-    linhas_reqs = montar_linhas_requerimentos(data_str, df_reqs, urls["legislativo"])
-    escrever_bloco(ws, linha_reqs, linhas_reqs)
-    mesclar_linhas_intervalo(ws, linha_reqs, len(linhas_reqs), 7, 15)
-
+    # ================= PROPOSIÇÕES =================
     linha_props = encontrar_linha(ws, "PROPOSIÇÕES", 1) + 1
-    linhas_props = montar_linhas_proposicoes(data_str, df_props, urls["legislativo"])
-    escrever_bloco(ws, linha_props, linhas_props)
+    linhas_props = montar_linhas_proposicoes(
+        data_str, df_props, urls["legislativo"], preencher_vazio_com_traco=True
+    )
+    desmesclar_intervalo(ws, linha_props, len(linhas_props), 7, 15)
+    escrever_bloco(ws, linha_props, linhas_props, mesclar_coluna_a=True)
     mesclar_linhas_intervalo(ws, linha_props, len(linhas_props), 7, 15)
+    aplicar_cor_responsaveis(ws, linha_props, linhas_props, colunas=(5, 6))
 
+    # ================= REQUERIMENTOS =================
+    linha_reqs = encontrar_linha(ws, "REQUERIMENTOS", 1) + 1
+    linhas_reqs = montar_linhas_requerimentos(
+        data_str, df_reqs, urls["legislativo"], preencher_vazio_com_traco=True
+    )
+    desmesclar_intervalo(ws, linha_reqs, len(linhas_reqs), 7, 15)
+    escrever_bloco(ws, linha_reqs, linhas_reqs, mesclar_coluna_a=True)
+    mesclar_linhas_intervalo(ws, linha_reqs, len(linhas_reqs), 7, 15)
+    aplicar_cor_responsaveis(ws, linha_reqs, linhas_reqs, colunas=(5, 6))
+
+    # ================= PARECERES =================
+    linha_pareceres = encontrar_linha(ws, "PARECERES", 1) + 1
+    linhas_pareceres = montar_linhas_pareceres(
+        data_str, df_pareceres, urls["legislativo"], preencher_vazio_com_traco=True
+    )
+    desmesclar_intervalo(ws, linha_pareceres, len(linhas_pareceres), 8, 15)
+    escrever_bloco(ws, linha_pareceres, linhas_pareceres, mesclar_coluna_a=True)
+    mesclar_linhas_intervalo(ws, linha_pareceres, len(linhas_pareceres), 8, 15)
+    aplicar_cor_responsaveis(ws, linha_pareceres, linhas_pareceres, colunas=(6, 7))
+
+    # ================= NORMAS - LEGISLATIVO =================
     linha_leg = encontrar_linha(ws, "DIÁRIO DO LEGISLATIVO", 1) + 1
-    escrever_bloco(
-        ws,
-        linha_leg,
-        montar_linhas_normas(data_str, df_leg_normas, urls["legislativo"])
-    )
+    linhas_leg = montar_linhas_normas(data_str, df_leg_normas, urls["legislativo"])
+    escrever_bloco(ws, linha_leg, linhas_leg, mesclar_coluna_a=True)
+    aplicar_cor_responsaveis(ws, linha_leg, linhas_leg, colunas=(7, 8, 12, 13, 14, 15))
 
+    # ================= NORMAS - ADMINISTRATIVO =================
     linha_adm = encontrar_linha(ws, "DIÁRIO ADMINISTRATIVO", 1) + 1
-    escrever_bloco(
-        ws,
-        linha_adm,
-        montar_linhas_normas(data_str, df_adm, urls["administrativo"])
+    linhas_adm = montar_linhas_normas(
+        data_str, df_adm, urls["administrativo"], preencher_vazio_com_traco=True
     )
+    escrever_bloco(ws, linha_adm, linhas_adm, mesclar_coluna_a=True)
+    aplicar_cor_responsaveis(ws, linha_adm, linhas_adm, colunas=(7, 8, 12, 13, 14, 15))
 
+    # ================= NORMAS - DIÁRIO DA JUSTIÇA =================
     linha_dj = encontrar_linha(ws, "DIÁRIO DA JUSTIÇA", 1) + 1
-    escrever_bloco(
-        ws,
-        linha_dj,
-        montar_linhas_normas(data_str, pd.DataFrame(), "")
-    )
+    linhas_dj = montar_linhas_normas(data_str, pd.DataFrame(), "")
+    escrever_bloco(ws, linha_dj, linhas_dj, mesclar_coluna_a=True)
+    aplicar_cor_responsaveis(ws, linha_dj, linhas_dj, colunas=(7, 8, 12, 13, 14, 15))
 
+    # ================= NORMAS - EXECUTIVO =================
     linha_exec = encontrar_linha(ws, "DIÁRIO DO EXECUTIVO", 1) + 1
-    escrever_bloco(
-        ws,
-        linha_exec,
-        montar_linhas_normas(data_str, df_exec, urls["executivo_html"])
-    )
+    linhas_exec = montar_linhas_normas(data_str, df_exec, urls["executivo_html"])
+    escrever_bloco(ws, linha_exec, linhas_exec, mesclar_coluna_a=True)
+    aplicar_cor_responsaveis(ws, linha_exec, linhas_exec, colunas=(7, 8, 12, 13, 14, 15))
 
+    # ================= TOTAIS =================
     total_1 = encontrar_linha_safe(ws, "TOTAL", 1)
     total_2 = encontrar_linha_safe(ws, "TOTAL", 2)
     total_3 = encontrar_linha_safe(ws, "TOTAL", 3)
     total_4 = encontrar_linha_safe(ws, "TOTAL", 4)
     total_5 = encontrar_linha_safe(ws, "TOTAL", 5)
 
-    total_normas = len(df_exec) + len(df_adm) + len(df_leg_normas)
-    total_alteracoes = (
-        contar_alteracoes(df_exec) +
-        contar_alteracoes(df_adm) +
-        contar_alteracoes(df_leg_normas)
+    total_normas = (
+        contar_normas_principais(df_exec) +
+        contar_normas_principais(df_adm) +
+        contar_normas_principais(df_leg_normas)
     )
+
+    qtd_exec, vides_exec = somar_quantidade_vides(df_exec)
+    qtd_adm, vides_adm = somar_quantidade_vides(df_adm)
+    qtd_leg, vides_leg = somar_quantidade_vides(df_leg_normas)
+
+    total_quantidade = qtd_exec + qtd_adm + qtd_leg
+    total_vides = vides_exec + vides_adm + vides_leg
 
     if total_1:
         escrever_celula(ws, f"F{total_1}", total_normas)
-        escrever_celula(ws, f"I{total_1}", total_alteracoes)
-        escrever_celula(ws, f"J{total_1}", 0)
+        escrever_celula(ws, f"I{total_1}", total_quantidade)
+        escrever_celula(ws, f"K{total_1}", total_vides)
 
     if total_2:
         escrever_celula(ws, f"C{total_2}", len(df_props))
@@ -970,6 +1788,9 @@ class LegislativeProcessor:
                         "Ano": "",
                         "Alterações": chave
                     })
+
+            if linha["Sigla"] == "EMC":
+                add_alteracao("CON 1989 1989")
 
             eventos = []
             for c in comandos_regex.finditer(bloco):
@@ -2593,6 +3414,39 @@ def run_app():
             except Exception as e:
                 st.error(f"Erro Administrativo: {e}")
                 df_adm = pd.DataFrame()
+
+            # ================= DISTRIBUIÇÃO AUTOMÁTICA =================
+            indisponiveis, aviso_calendar = listar_indisponiveis_calendar(data_obj)
+            if aviso_calendar:
+                st.warning(aviso_calendar)
+
+            if indisponiveis:
+                st.info(
+                    "Indisponíveis por Licença/Férias no calendário: " +
+                    ", ".join(sorted(indisponiveis))
+                )
+            else:
+                st.info("Nenhuma Licença/Férias encontrada no calendário para a data selecionada.")
+
+            for aviso in validar_pools_distribuicao(indisponiveis):
+                st.warning(aviso)
+
+            (
+                df_exec,
+                df_adm,
+                df_leg_normas,
+                df_props,
+                df_reqs,
+                df_pareceres,
+            ) = distribuir_tarefas_extraidas_em_blocos(
+                df_exec=df_exec,
+                df_adm=df_adm,
+                df_leg_normas=df_leg_normas,
+                df_props=df_props,
+                df_reqs=df_reqs,
+                df_pareceres=df_pareceres,
+                indisponiveis=indisponiveis,
+            )
 
             # ================= GOOGLE SHEETS =================
             try:
