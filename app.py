@@ -2650,7 +2650,7 @@ class ExecutiveProcessor:
                 tipo_ev, pos_ev, match_obj = ev
                 command_text = match_obj.group(0).lower()
 
-                if tipo_ev == "published":
+                                if tipo_ev == "published":
                     match = match_obj
 
                     tem_asterisco = bool(match.group(1))
@@ -2687,42 +2687,50 @@ class ExecutiveProcessor:
                     ultima_norma = linha
                     seen_alteracoes = set()
 
-        elif tipo_ev == "command":
-            if ultima_norma is None:
-                  continue
+                elif tipo_ev == "command":
+                    if ultima_norma is None:
+                        continue
 
-            # A janela de busca não pode ultrapassar o início da próxima norma.
-            # Se ultrapassar, uma norma seguinte pode ser capturada como "alteração"
-            # da norma anterior, como aconteceu com DEC 49218 -> DNE 409.
-            raio_antes = 350
-            raio_depois = 350
+                    # A janela de busca deve ficar dentro da norma atual.
+                    # Ela não pode atravessar para a próxima epígrafe normativa.
+                    raio_antes = 350
+                    raio_depois = 350
 
-            normas_na_coluna = list(self.norma_regex.finditer(texto))
+                    normas_na_coluna = list(self.norma_regex.finditer(texto))
 
-            norma_anterior_end = 0
-            proxima_norma_start = len(texto)
+                    norma_anterior_end = 0
+                    proxima_norma_start = len(texto)
 
-            for nm in normas_na_coluna:
-                if nm.start() < pos_ev:
-                    norma_anterior_end = max(norma_anterior_end, nm.end())
-            elif nm.start() > pos_ev:
-                proxima_norma_start = min(proxima_norma_start, nm.start())
+                    for nm in normas_na_coluna:
+                        if nm.start() < pos_ev:
+                            norma_anterior_end = max(norma_anterior_end, nm.end())
+                        elif nm.start() > pos_ev:
+                            proxima_norma_start = min(proxima_norma_start, nm.start())
 
-            start_block = max(norma_anterior_end, pos_ev - raio_antes)
-            end_block = min(proxima_norma_start, pos_ev + raio_depois)
+                    start_block = max(norma_anterior_end, pos_ev - raio_antes)
+                    end_block = min(proxima_norma_start, pos_ev + raio_depois)
 
-            bloco = texto[start_block:end_block]
+                    bloco = texto[start_block:end_block]
+
                     alteracoes_para_processar = []
-                    if "revogado" in command_text:
-                        alteracoes_para_processar = list(self.norma_alterada_regex.finditer(bloco))
+
+                    if "revoga" in command_text or "revogado" in command_text:
+                        alteracoes_para_processar = list(
+                            self.norma_alterada_regex.finditer(bloco)
+                        )
                     else:
-                        alteracoes_candidatas = list(self.norma_alterada_regex.finditer(bloco))
+                        alteracoes_candidatas = list(
+                            self.norma_alterada_regex.finditer(bloco)
+                        )
+
                         if alteracoes_candidatas:
                             pos_comando_no_bloco = pos_ev - start_block
+
                             melhor_candidato = min(
                                 alteracoes_candidatas,
                                 key=lambda m: abs(m.start() - pos_comando_no_bloco)
                             )
+
                             alteracoes_para_processar = [melhor_candidato]
 
                     for alt in alteracoes_para_processar:
@@ -2749,6 +2757,7 @@ class ExecutiveProcessor:
 
                         if tipo_alt == ultima_norma["Tipo"] and num_alt == ultima_norma["Número"]:
                             continue
+
                         if chave_alt in seen_alteracoes:
                             continue
 
@@ -2766,7 +2775,6 @@ class ExecutiveProcessor:
                                 "Alterações": chave_alt,
                                 "Observação": ""
                             })
-
         return pd.DataFrame(dados) if dados else pd.DataFrame()
 
 
