@@ -2650,7 +2650,7 @@ class ExecutiveProcessor:
                 tipo_ev, pos_ev, match_obj = ev
                 command_text = match_obj.group(0).lower()
 
-                            if tipo_ev == "published":
+                if tipo_ev == "published":
                     match = match_obj
 
                     tem_asterisco = bool(match.group(1))
