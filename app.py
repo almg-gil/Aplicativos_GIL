@@ -1383,6 +1383,7 @@ def atribuir_responsaveis_normas(
             continue
 
         pos_principais.append(pos)
+
         if eh_norma_dne(r):
             pos_dne.append(pos)
         else:
@@ -1390,7 +1391,23 @@ def atribuir_responsaveis_normas(
 
     mapa_exec_dne = distribuir_para_posicoes(len(df), pos_dne, cand_exec_dne)
     mapa_exec_nao_dne = distribuir_para_posicoes(len(df), pos_nao_dne, cand_exec_nao_dne)
-    mapa_rev = distribuir_para_posicoes(len(df), pos_principais, cand_rev)
+
+    # 1) monta primeiro a execução das normas principais
+    execucoes_principais = []
+    for pos in pos_principais:
+        executor = mapa_exec_dne.get(pos, mapa_exec_nao_dne.get(pos, ""))
+        execucoes_principais.append(nome_planilha(executor))
+
+    # 2) distribui revisores impedindo executor == revisor
+    revisoes_principais = distribuir_revisores_sem_mesma_pessoa(
+        execucoes_principais,
+        cand_rev
+    )
+
+    mapa_rev = {
+        pos: revisor
+        for pos, revisor in zip(pos_principais, revisoes_principais)
+    }
 
     execucoes = []
     revisoes = []
