@@ -1833,16 +1833,34 @@ class LegislativeProcessor:
                     alteracoes_para_processar = []
 
                     if "revoga" in command_text or "revogado" in command_text:
-                        alteracoes_para_processar = list(norma_alterada_regex.finditer(bloco_janela))
-                    else:
-                        alteracoes_candidatas = list(norma_alterada_regex.finditer(bloco_janela))
-                        if alteracoes_candidatas:
-                            pos_comando_no_bloco = pos_ev - start_block
-                            melhor_candidato = min(
-                                alteracoes_candidatas,
-                                key=lambda m: abs(m.start() - pos_comando_no_bloco)
-                            )
-                            alteracoes_para_processar = [melhor_candidato]
+                        trecho = bloco[pos_ev:]
+
+                        # corta no próximo artigo, para não invadir Art. 19, Art. 20 etc.
+                         m_fim = re.search(
+                            r"\n\s*Art\.\s*\d+º?\s*[–—-]",
+                            trecho[match_obj.end() - pos_ev:],
+                            re.IGNORECASE
+                         )
+
+                        if m_fim:
+                            fim = (match_obj.end() - pos_ev) + m_fim.start()
+                            bloco_revogacao = trecho[:fim]
+                        else:
+                            bloco_revogacao = trecho[:1500]
+
+                        alteracoes_para_processar = list(
+                            norma_alterada_regex.finditer(bloco_revogacao)
+                        )
+
+                else:
+                    alteracoes_candidatas = list(norma_alterada_regex.finditer(bloco_janela))
+                    if alteracoes_candidatas:
+                        pos_comando_no_bloco = pos_ev - start_block
+                        melhor_candidato = min(
+                            alteracoes_candidatas,
+                            key=lambda m: abs(m.start() - pos_comando_no_bloco)
+                        )
+                        alteracoes_para_processar = [melhor_candidato]
 
                     for alt in alteracoes_para_processar:
                         tipo_alt_extenso = alt.group(1).upper().strip()
