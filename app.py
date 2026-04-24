@@ -1579,7 +1579,12 @@ def preencher_aba_modelo(
 
     # ================= NORMAS - LEGISLATIVO =================
     linha_leg = encontrar_linha(ws, "DIÁRIO DO LEGISLATIVO", 1) + 1
-    linhas_leg = montar_linhas_normas(data_str, df_leg_normas, urls["legislativo"])
+    linhas_leg = montar_linhas_normas(
+        data_str,
+        df_leg_normas,
+        urls["legislativo"],
+        preencher_vazio_com_traco=True
+    )
     escrever_bloco(ws, linha_leg, linhas_leg, mesclar_coluna_a=True)
     aplicar_cor_responsaveis(ws, linha_leg, linhas_leg, colunas=(7, 8, 12, 13, 14, 15))
 
