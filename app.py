@@ -1836,11 +1836,11 @@ class LegislativeProcessor:
                         trecho = bloco[pos_ev:]
 
                         # corta no próximo artigo, para não invadir Art. 19, Art. 20 etc.
-                         m_fim = re.search(
+                        m_fim = re.search(
                             r"\n\s*Art\.\s*\d+º?\s*[–—-]",
                             trecho[match_obj.end() - pos_ev:],
                             re.IGNORECASE
-                         )
+                        )
 
                         if m_fim:
                             fim = (match_obj.end() - pos_ev) + m_fim.start()
