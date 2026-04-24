@@ -1821,76 +1821,76 @@ class LegislativeProcessor:
             eventos.sort(key=lambda e: e[1])
 
             for ev in eventos:
-    tipo_ev, pos_ev, match_obj = ev
-    command_text = match_obj.group(0).lower()
+                tipo_ev, pos_ev, match_obj = ev
+                command_text = match_obj.group(0).lower()
 
-    if tipo_ev != "command":
-        continue
+                if tipo_ev != "command":
+                    continue
 
-    raio = 300
-    start_block = max(0, pos_ev - raio)
-    end_block = min(len(bloco), pos_ev + raio)
-    bloco_janela = bloco[start_block:end_block]
+                raio = 300
+                start_block = max(0, pos_ev - raio)
+                end_block = min(len(bloco), pos_ev + raio)
+                bloco_janela = bloco[start_block:end_block]
 
-    alteracoes_para_processar = []
+                alteracoes_para_processar = []
 
-    if "revoga" in command_text or "revogado" in command_text:
-        trecho = bloco[pos_ev:]
+                if "revoga" in command_text or "revogado" in command_text:
+                    trecho = bloco[pos_ev:]
 
-        deslocamento_inicio_busca = match_obj.end() - pos_ev
+                    deslocamento_inicio_busca = match_obj.end() - pos_ev
 
-        # corta no próximo artigo, para não invadir Art. 19, Art. 20 etc.
-        m_fim = re.search(
-            r"\n\s*Art\.\s*\d+º?\s*[–—-]",
-            trecho[deslocamento_inicio_busca:],
-            re.IGNORECASE
-        )
+                    # corta no próximo artigo, para não invadir Art. 19, Art. 20 etc.
+                    m_fim = re.search(
+                        r"\n\s*Art\.\s*\d+º?\s*[–—-]",
+                        trecho[deslocamento_inicio_busca:],
+                        re.IGNORECASE
+                    )
 
-        if m_fim:
-            fim = deslocamento_inicio_busca + m_fim.start()
-            bloco_revogacao = trecho[:fim]
-        else:
-            bloco_revogacao = trecho[:1500]
+                    if m_fim:
+                        fim = deslocamento_inicio_busca + m_fim.start()
+                        bloco_revogacao = trecho[:fim]
+                    else:
+                        bloco_revogacao = trecho[:1500]
 
-        alteracoes_para_processar = list(
-            norma_alterada_regex.finditer(bloco_revogacao)
-        )
+                    alteracoes_para_processar = list(
+                        norma_alterada_regex.finditer(bloco_revogacao)
+                    )
 
-    else:
-        alteracoes_candidatas = list(
-            norma_alterada_regex.finditer(bloco_janela)
-        )
+                else:
+                    alteracoes_candidatas = list(
+                        norma_alterada_regex.finditer(bloco_janela)
+                    )
 
-        if alteracoes_candidatas:
-            pos_comando_no_bloco = pos_ev - start_block
-            melhor_candidato = min(
-                alteracoes_candidatas,
-                key=lambda m: abs(m.start() - pos_comando_no_bloco)
-            )
-            alteracoes_para_processar = [melhor_candidato]
+                    if alteracoes_candidatas:
+                        pos_comando_no_bloco = pos_ev - start_block
+                        melhor_candidato = min(
+                            alteracoes_candidatas,
+                            key=lambda m: abs(m.start() - pos_comando_no_bloco)
+                        )
+                        alteracoes_para_processar = [melhor_candidato]
 
-    for alt in alteracoes_para_processar:
-        tipo_alt_extenso = alt.group(1).upper().strip()
-        num_alt = alt.group(2).replace(".", "")
-        ano_alt = alt.group(3) or alt.group(4) or ""
+                for alt in alteracoes_para_processar:
+                    tipo_alt_extenso = alt.group(1).upper().strip()
+                    num_alt = alt.group(2).replace(".", "")
+                    ano_alt = alt.group(3) or alt.group(4) or ""
 
-        sigla_alt = TIPO_MAP_NORMA.get(tipo_alt_extenso, tipo_alt_extenso)
+                    sigla_alt = TIPO_MAP_NORMA.get(tipo_alt_extenso, tipo_alt_extenso)
 
-        if (
-            sigla_alt == linha["Sigla"]
-            and num_alt == linha["Número"]
-            and ((not ano_alt) or ano_alt == linha["Ano"])
-        ):
-            continue
+                    if (
+                        sigla_alt == linha["Sigla"]
+                        and num_alt == linha["Número"]
+                        and ((not ano_alt) or ano_alt == linha["Ano"])
+                    ):
+                        continue
 
-        chave = f"{sigla_alt} {num_alt}"
-        if ano_alt:
-            chave += f" {ano_alt}"
+                    chave = f"{sigla_alt} {num_alt}"
+                    if ano_alt:
+                        chave += f" {ano_alt}"
 
-        if chave in seen_alteracoes:
-            continue
+                    if chave in seen_alteracoes:
+                        continue
 
-        add_alteracao(chave)
+                    add_alteracao(chave)
 
         return pd.DataFrame(
             resultados,
