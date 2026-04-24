@@ -2687,15 +2687,31 @@ class ExecutiveProcessor:
                     ultima_norma = linha
                     seen_alteracoes = set()
 
-                elif tipo_ev == "command":
+               elif tipo_ev == "command":
                     if ultima_norma is None:
                         continue
 
-                    raio = 350
-                    start_block = max(0, pos_ev - raio)
-                    end_block = min(len(texto), pos_ev + raio)
-                    bloco = texto[start_block:end_block]
+                    # A janela de busca não pode ultrapassar o início da próxima norma.
+                    # Se ultrapassar, uma norma seguinte pode ser capturada como "alteração"
+                    # da norma anterior, como aconteceu com DEC 49218 -> DNE 409.
+                    raio_antes = 350
+                    raio_depois = 350
 
+                    normas_na_coluna = list(self.norma_regex.finditer(texto))
+
+                    norma_anterior_end = 0
+                    proxima_norma_start = len(texto)
+
+                    for nm in normas_na_coluna:
+                        if nm.start() < pos_ev:
+                            norma_anterior_end = max(norma_anterior_end, nm.end())
+                        elif nm.start() > pos_ev:
+                            proxima_norma_start = min(proxima_norma_start, nm.start())
+
+                    start_block = max(norma_anterior_end, pos_ev - raio_antes)
+                    end_block = min(proxima_norma_start, pos_ev + raio_depois)
+
+                    bloco = texto[start_block:end_block]
                     alteracoes_para_processar = []
                     if "revogado" in command_text:
                         alteracoes_para_processar = list(self.norma_alterada_regex.finditer(bloco))
