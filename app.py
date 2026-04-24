@@ -2687,31 +2687,31 @@ class ExecutiveProcessor:
                     ultima_norma = linha
                     seen_alteracoes = set()
 
-            elif tipo_ev == "command":
-                if ultima_norma is None:
-                    continue
+        elif tipo_ev == "command":
+            if ultima_norma is None:
+                  continue
 
-                # A janela de busca não pode ultrapassar o início da próxima norma.
-                # Se ultrapassar, uma norma seguinte pode ser capturada como "alteração"
-                # da norma anterior, como aconteceu com DEC 49218 -> DNE 409.
-                raio_antes = 350
-                raio_depois = 350
+            # A janela de busca não pode ultrapassar o início da próxima norma.
+            # Se ultrapassar, uma norma seguinte pode ser capturada como "alteração"
+            # da norma anterior, como aconteceu com DEC 49218 -> DNE 409.
+            raio_antes = 350
+            raio_depois = 350
 
-                normas_na_coluna = list(self.norma_regex.finditer(texto))
+            normas_na_coluna = list(self.norma_regex.finditer(texto))
 
-                norma_anterior_end = 0
-                proxima_norma_start = len(texto)
+            norma_anterior_end = 0
+            proxima_norma_start = len(texto)
 
-                for nm in normas_na_coluna:
-                    if nm.start() < pos_ev:
-                        norma_anterior_end = max(norma_anterior_end, nm.end())
-                    elif nm.start() > pos_ev:
-                        proxima_norma_start = min(proxima_norma_start, nm.start())
+            for nm in normas_na_coluna:
+                if nm.start() < pos_ev:
+                    norma_anterior_end = max(norma_anterior_end, nm.end())
+            elif nm.start() > pos_ev:
+                proxima_norma_start = min(proxima_norma_start, nm.start())
 
-                    start_block = max(norma_anterior_end, pos_ev - raio_antes)
-                    end_block = min(proxima_norma_start, pos_ev + raio_depois)
+            start_block = max(norma_anterior_end, pos_ev - raio_antes)
+            end_block = min(proxima_norma_start, pos_ev + raio_depois)
 
-                    bloco = texto[start_block:end_block]
+            bloco = texto[start_block:end_block]
                     alteracoes_para_processar = []
                     if "revogado" in command_text:
                         alteracoes_para_processar = list(self.norma_alterada_regex.finditer(bloco))
