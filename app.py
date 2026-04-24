@@ -1825,7 +1825,7 @@ class LegislativeProcessor:
                 command_text = match_obj.group(0).lower()
 
                 if tipo_ev == "command":
-                    raio = 300
+                    raio = 350
                     start_block = max(0, pos_ev - raio)
                     end_block = min(len(bloco), pos_ev + raio)
                     bloco_janela = bloco[start_block:end_block]
