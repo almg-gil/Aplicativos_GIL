@@ -2570,6 +2570,19 @@ class ExecutiveProcessor:
         except ValueError:
             return dirty_bytes
 
+    def _cortar_apos_atos_governador(self, texto: str) -> tuple[str, bool]:
+        """
+        Corta o texto a partir do marcador 'Atos do Governador'.
+        Retorna:
+          - texto antes do marcador
+          - True se o marcador foi encontrado
+        """
+        m = re.search(r"\bAtos\s+do\s+Governador\b", texto, re.IGNORECASE)
+        if not m:
+            return texto, False
+
+        return texto[:m.start()].strip(), True
+
     def _remover_rodape_autenticidade(self, texto: str) -> str:
                             if not texto:
                                 return texto
@@ -2614,25 +2627,41 @@ class ExecutiveProcessor:
             return pd.DataFrame()
 
         trechos = []
+        fim_secao = False
+
         try:
             with pdfplumber.open(io.BytesIO(self.pdf_bytes)) as pdf:
-                for i in range(start_page_idx, end_page_idx):
-                    pagina = pdf.pages[i]
-                    largura, altura = pagina.width, pagina.height
-                    for col_num, (x0, x1) in enumerate([(0, largura / 2), (largura / 2, largura)], start=1):
-                        coluna = pagina.crop((x0, 0, x1, altura)).extract_text(layout=True) or ""
-                        texto_limpo = coluna.replace("\xa0", " ")
-                        texto_limpo = self._remover_rodape_autenticidade(texto_limpo)
+            for i in range(start_page_idx, end_page_idx):
+                if fim_secao:
+                    break
 
+                pagina = pdf.pages[i]
+                largura, altura = pagina.width, pagina.height
+
+                for col_num, (x0, x1) in enumerate(
+                    [(0, largura / 2), (largura / 2, largura)],
+                    start=1
+                ):
+                    coluna = pagina.crop((x0, 0, x1, altura)).extract_text(layout=True) or ""
+                    texto_limpo = coluna.replace("\xa0", " ")
+                    texto_limpo = self._remover_rodape_autenticidade(texto_limpo)
+
+                    texto_limpo, encontrou_fim = self._cortar_apos_atos_governador(texto_limpo)
+
+                    if texto_limpo.strip():
                         trechos.append({
                             "pagina": i + 1,
                             "coluna": col_num,
                             "texto": texto_limpo
                         })
 
-        except Exception as e:
-            st.error(f"Erro ao extrair texto detalhado do PDF do Executivo: {e}")
-            return pd.DataFrame()
+                    if encontrou_fim:
+                        fim_secao = True
+                        break
+
+    except Exception as e:
+        st.error(f"Erro ao extrair texto detalhado do PDF do Executivo: {e}")
+        return pd.DataFrame()
 
         dados = []
         ultima_norma = None
