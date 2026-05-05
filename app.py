@@ -285,9 +285,7 @@ def conectar_calendar_service():
 
 
 def obter_calendarios_afastamento() -> list[str]:
-    calendar_ids = st.secrets.get("calendar_ids_afastamentos", [])
-    if not calendar_ids:
-        calendar_ids = st.secrets.get("CALENDARIOS_AFASTAMENTOS", [])
+    calendar_ids = st.secrets.get("GOOGLE_CALENDAR_ID", "")
 
     if isinstance(calendar_ids, str):
         calendar_ids = [x.strip() for x in calendar_ids.split(",") if x.strip()]
@@ -3460,31 +3458,6 @@ def run_app():
 
         data_obj = st.session_state["data_ref"]
         data = data_obj.strftime("%d/%m/%Y")
-
-        if st.button("Testar Férias/Licenças no Calendar", use_container_width=True):
-            try:
-                eventos_afastamento = buscar_afastamentos_calendar(data_obj)
-
-                if not eventos_afastamento:
-                    st.info("Conexão OK. Nenhum evento de Férias ou Licença encontrado para esta data.")
-                else:
-                    st.success(f"{len(eventos_afastamento)} evento(s) encontrado(s).")
-
-                    for evento in eventos_afastamento:
-                        titulo = evento.get("summary", "Sem título")
-                        inicio_evento = (
-                            evento.get("start", {}).get("dateTime")
-                            or evento.get("start", {}).get("date")
-                        )
-                        fim_evento = (
-                            evento.get("end", {}).get("dateTime")
-                            or evento.get("end", {}).get("date")
-                        )
-
-                        st.write(f"- {titulo} — {inicio_evento} até {fim_evento}")
-
-            except Exception as e:
-                st.error(f"Erro ao consultar Google Calendar: {e}")
 
         pode_processar = True
 
