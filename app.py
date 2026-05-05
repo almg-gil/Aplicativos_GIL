@@ -32,6 +32,12 @@ import unicodedata
 PLANILHA_URL = "https://docs.google.com/spreadsheets/d/1-am5qb_SV853v5omolRM46G8-IQH5ABJKXtoFh_WUvQ"
 ABA_MODELO = "MODELO"
 
+GOOGLE_SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/calendar.events.readonly",
+]
+
 
 @st.cache_resource
 def garantir_playwright_chromium():
@@ -201,11 +207,7 @@ def obter_google_credentials():
     creds_dict = st.secrets["gcp_service_account"]
     creds = Credentials.from_service_account_info(
         creds_dict,
-        scopes=[
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive",
-            "https://www.googleapis.com/auth/calendar.readonly",
-        ]
+        scopes=GOOGLE_SCOPES
     )
 
     usuario_impersonado = st.secrets.get("calendar_impersonate_user", "")
@@ -222,6 +224,58 @@ def conectar_gsheet():
     creds = obter_google_credentials()
     client = gspread.authorize(creds)
     return client.open_by_url(PLANILHA_URL)
+
+def conectar_calendar():
+    creds_dict = st.secrets["gcp_service_account"]
+
+    creds = Credentials.from_service_account_info(
+        creds_dict,
+        scopes=GOOGLE_SCOPES
+    )
+
+    return build(
+        "calendar",
+        "v3",
+        credentials=creds,
+        cache_discovery=False
+    )
+
+
+def buscar_afastamentos_calendar(data_ref: date):
+    service = conectar_calendar()
+    calendar_id = st.secrets["GOOGLE_CALENDAR_ID"]
+
+    tz = ZoneInfo("America/Sao_Paulo")
+    inicio = datetime.combine(data_ref, datetime.min.time(), tzinfo=tz)
+    fim = inicio + timedelta(days=1)
+
+    termos = ["Férias:", "Licença:"]
+    eventos_por_id = {}
+
+    for termo in termos:
+        resultado = service.events().list(
+            calendarId=calendar_id,
+            timeMin=inicio.isoformat(),
+            timeMax=fim.isoformat(),
+            singleEvents=True,
+            orderBy="startTime",
+            q=termo,
+            maxResults=250
+        ).execute()
+
+        for evento in resultado.get("items", []):
+            titulo = evento.get("summary", "").strip()
+            titulo_normalizado = titulo.lower()
+
+            if titulo_normalizado.startswith((
+                "férias:",
+                "ferias:",
+                "licença:",
+                "licenca:"
+            )):
+                eventos_por_id[evento["id"]] = evento
+
+    return list(eventos_por_id.values())
 
 
 @st.cache_resource
@@ -3406,6 +3460,31 @@ def run_app():
 
         data_obj = st.session_state["data_ref"]
         data = data_obj.strftime("%d/%m/%Y")
+
+        if st.button("Testar Férias/Licenças no Calendar", use_container_width=True):
+            try:
+                eventos_afastamento = buscar_afastamentos_calendar(data_obj)
+
+                if not eventos_afastamento:
+                    st.info("Conexão OK. Nenhum evento de Férias ou Licença encontrado para esta data.")
+                else:
+                    st.success(f"{len(eventos_afastamento)} evento(s) encontrado(s).")
+
+                    for evento in eventos_afastamento:
+                        titulo = evento.get("summary", "Sem título")
+                        inicio_evento = (
+                            evento.get("start", {}).get("dateTime")
+                            or evento.get("start", {}).get("date")
+                        )
+                        fim_evento = (
+                            evento.get("end", {}).get("dateTime")
+                            or evento.get("end", {}).get("date")
+                        )
+
+                        st.write(f"- {titulo} — {inicio_evento} até {fim_evento}")
+
+            except Exception as e:
+                st.error(f"Erro ao consultar Google Calendar: {e}")
 
         pode_processar = True
 
