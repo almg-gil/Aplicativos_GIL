@@ -2131,9 +2131,26 @@ class LegislativeProcessor:
         rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*d+(?:as|os|a|o)\b", re.MULTILINE)
         rqc_old_pattern = re.compile(r"^(?:\s*)(nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*d+(?:as|os|a|o)\b", re.MULTILINE)
 
+        def eh_contexto_de_correspondencia(texto: str, start_idx: int) -> bool:
+            janela = texto[max(0, start_idx - 250): start_idx + 180]
+            janela_norm = re.sub(r"\s+", " ", janela).strip().lower()
+
+            padroes = [
+                r"\bof[ií]cio\b.{0,220}\bprestando informa[cç][oõ]es relativas ao requerimento\b",
+                r"\bprestando informa[cç][oõ]es relativas ao requerimento\b",
+                r"\banexe-se ao requerimento\b",
+                r"\brelativas ao requerimento\b",
+                r"\breferentes ao requerimento\b",
+            ]
+
+            return any(re.search(p, janela_norm, re.IGNORECASE) for p in padroes)
+
         for pattern, sigla_prefix in [(rqn_pattern, "RQN"), (rqc_old_pattern, "RQC")]:
             for match in pattern.finditer(self.text):
                 start_idx = match.start()
+
+                if eh_contexto_de_correspondencia(self.text, start_idx):
+                    continue
 
                 # ignora citações do tipo:
                 # nº 16.969/2026, da Comissão dos Direitos da Mulher).
