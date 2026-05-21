@@ -1951,8 +1951,14 @@ class LegislativeProcessor:
         )
 
     def process_proposicoes(self) -> pd.DataFrame:
+        tipos_prop_regex = "|".join(
+            re.escape(tipo)
+            for tipo in sorted(TIPO_MAP_PROP, key=len, reverse=True)
+        )
+
         pattern_prop = re.compile(
-            r"^\s*(?:- )?\s*(PROJETO DE LEI COMPLEMENTAR|PROJETO DE LEI|INDICAÇÃO|PROJETO DE RESOLUÇÃO|PROPOSTA DE EMENDA À CONSTITUIÇÃO|MENSAGEM|VETO) Nº (\d{1,4}\.?\d{0,3}/\d{4})",
+            rf"^\s*(?:-\s*)?({tipos_prop_regex})\s+N[º°]\s*"
+            rf"(\d{{1,5}}(?:\.\d{{3}})?/\d{{4}})",
             re.MULTILINE
         )
         pattern_utilidade = re.compile(r"Declara de utilidade pública", re.IGNORECASE | re.DOTALL)
