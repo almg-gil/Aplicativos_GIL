@@ -301,7 +301,19 @@ def extrair_nome_evento_afastamento(summary: str) -> str:
 
     nome_raw = m.group(2).strip()
     nome_raw = re.sub(r"\s*\(.*?\)\s*$", "", nome_raw).strip()
-    return MAPA_NOMES_EQUIPE.get(normalizar_nome_chave(nome_raw), "")
+
+    chave = normalizar_nome_chave(nome_raw)
+
+    # 1) correspondência exata
+    if chave in MAPA_NOMES_EQUIPE:
+        return MAPA_NOMES_EQUIPE[chave]
+
+    # 2) se vier nome completo, tenta pelo primeiro nome
+    primeiro_nome = chave.split()[0] if chave.split() else ""
+    if primeiro_nome in MAPA_NOMES_EQUIPE:
+        return MAPA_NOMES_EQUIPE[primeiro_nome]
+
+    return ""
 
 
 def evento_atinge_data(evento: dict, data_ref: date, tz: ZoneInfo) -> bool:
