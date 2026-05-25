@@ -2140,8 +2140,8 @@ class LegislativeProcessor:
             return ")" in depois
 
 
-        rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*d+(?:as|os|a|o)\b", re.MULTILINE)
-        rqc_old_pattern = re.compile(r"^(?:\s*)(nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*d+(?:as|os|a|o)\b", re.MULTILINE)
+        rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*d[ao]s?\b", re.MULTILINE)
+        rqc_old_pattern = re.compile(r"^(?:\s*)(nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*d[ao]s?\b", re.MULTILINE)
 
         def eh_citacao_de_parecer_sobre_requerimento(texto: str, start_idx: int) -> bool:
             antes = re.sub(
@@ -2182,41 +2182,41 @@ class LegislativeProcessor:
             return any(re.search(p, janela_norm, re.IGNORECASE) for p in padroes)
 
         for pattern, sigla_prefix in [(rqn_pattern, "RQN"), (rqc_old_pattern, "RQC")]:
-             for match in pattern.finditer(self.text):
-                 start_idx = match.start()
+            for match in pattern.finditer(self.text):
+                start_idx = match.start()
 
-                  if eh_contexto_de_correspondencia(self.text, start_idx):
-                       continue
+                if eh_contexto_de_correspondencia(self.text, start_idx):
+                    continue
 
-                   if eh_citacao_de_parecer_sobre_requerimento(self.text, start_idx):
-                      continue
+                if eh_citacao_de_parecer_sobre_requerimento(self.text, start_idx):
+                    continue
 
-                    # ignora citações do tipo:
-                    # nº 16.969/2026, da Comissão dos Direitos da Mulher).
-                    if fecha_parentese_logo_depois(self.text, start_idx, lookahead=80):
-                        continue
+                # ignora citações do tipo:
+                # nº 16.969/2026, da Comissão dos Direitos da Mulher).
+                if fecha_parentese_logo_depois(self.text, start_idx, lookahead=80):
+                    continue
 
-                    next_match = re.search(
-                        r"^(?:\s*)(Nº|nº)\s+(\d{2}\.?\d{3}/\d{4})",
-                        self.text[start_idx + 1:],
-                        flags=re.MULTILINE
-                    )    
+                next_match = re.search(
+                    r"^(?:\s*)(Nº|nº)\s+(\d{2}\.?\d{3}/\d{4})",
+                    self.text[start_idx + 1:],
+                    flags=re.MULTILINE
+                )
 
-                    end_idx = (next_match.start() + start_idx + 1) if next_match else len(self.text)
-                    block = self.text[start_idx:end_idx].strip()
-                    nums_in_block = re.findall(r"\d{2}\.?\d{3}/\d{4}", block)
+                end_idx = (next_match.start() + start_idx + 1) if next_match else len(self.text)
+                block = self.text[start_idx:end_idx].strip()
+                nums_in_block = re.findall(r"\d{2}\.?\d{3}/\d{4}", block)
 
-                    if not nums_in_block:
-                        continue
+                if not nums_in_block:
+                    continue
 
-                    num_part, ano = nums_in_block[0].replace(".", "").split("/")
-                    numero_ano = f"{num_part}/{ano}"
+                num_part, ano = nums_in_block[0].replace(".", "").split("/")
+                numero_ano = f"{num_part}/{ano}"
 
-                    if numero_ano in reqs_to_ignore and not bloco_parece_requerimento_real(block):
-                        continue
+                if numero_ano in reqs_to_ignore and not bloco_parece_requerimento_real(block):
+                    continue
 
-                    classif = classify_req(block)
-                    requerimentos.append([sigla_prefix, num_part, ano, "", "", classif])
+                classif = classify_req(block)
+                requerimentos.append([sigla_prefix, num_part, ano, "", "", classif])
 
         nao_recebidas_header_pattern = re.compile(r"PROPOSIÇÕES\s*NÃO\s*RECEBIDAS", re.IGNORECASE)
         header_match = nao_recebidas_header_pattern.search(self.text)
