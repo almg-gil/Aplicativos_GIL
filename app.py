@@ -2197,7 +2197,7 @@ class LegislativeProcessor:
                         continue
 
                     next_match = re.search(
-                            r"^(?:\s*)(Nº|nº)\s+(\d{2}\.?\d{3}/\d{4})",
+                        r"^(?:\s*)(Nº|nº)\s+(\d{2}\.?\d{3}/\d{4})",
                         self.text[start_idx + 1:],
                         flags=re.MULTILINE
                     )    
@@ -2212,8 +2212,6 @@ class LegislativeProcessor:
                     num_part, ano = nums_in_block[0].replace(".", "").split("/")
                     numero_ano = f"{num_part}/{ano}"
 
-                    # se o número estiver em ignore, mas o bloco for claramente um requerimento real,
-                        # ele deve ser mantido
                     if numero_ano in reqs_to_ignore and not bloco_parece_requerimento_real(block):
                         continue
 
