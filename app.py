@@ -2196,7 +2196,7 @@ class LegislativeProcessor:
         if fecha_parentese_logo_depois(self.text, start_idx, lookahead=80):
             continue
 
-                next_match = re.search(
+            next_match = re.search(
                     r"^(?:\s*)(Nº|nº)\s+(\d{2}\.?\d{3}/\d{4})",
                     self.text[start_idx + 1:],
                     flags=re.MULTILINE
