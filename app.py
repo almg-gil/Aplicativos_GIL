@@ -2143,6 +2143,30 @@ class LegislativeProcessor:
         rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*d+(?:as|os|a|o)\b", re.MULTILINE)
         rqc_old_pattern = re.compile(r"^(?:\s*)(nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*d+(?:as|os|a|o)\b", re.MULTILINE)
 
+        def eh_citacao_de_parecer_sobre_requerimento(texto: str, start_idx: int) -> bool:
+            antes = re.sub(
+                r"\s+",
+                " ",
+                texto[max(0, start_idx - 120):start_idx]
+            ).strip().lower()
+
+            depois = re.sub(
+                r"\s+",
+                " ",
+                texto[start_idx:start_idx + 250]
+            ).strip().lower()
+
+            return bool(
+                re.search(r"\bdo\s+requerimento\s*$", antes)
+                and re.search(
+                    r"^n[ºo]?\s*\d{1,5}(?:\.\d{1,3})?/\d{4}\s*,\s*"
+                    r"d[ao]s?\s+comiss[aã]o"
+                    r".{0,200}\bpela\s+aprova[cç][aã]o\b",
+                    depois,
+                    flags=re.IGNORECASE
+                )
+            )
+
         def eh_contexto_de_correspondencia(texto: str, start_idx: int) -> bool:
             janela = texto[max(0, start_idx - 250): start_idx + 180]
             janela_norm = re.sub(r"\s+", " ", janela).strip().lower()
@@ -2160,14 +2184,17 @@ class LegislativeProcessor:
         for pattern, sigla_prefix in [(rqn_pattern, "RQN"), (rqc_old_pattern, "RQC")]:
             for match in pattern.finditer(self.text):
                 start_idx = match.start()
-
+    
                 if eh_contexto_de_correspondencia(self.text, start_idx):
                     continue
 
-                # ignora citações do tipo:
-                # nº 16.969/2026, da Comissão dos Direitos da Mulher).
-                if fecha_parentese_logo_depois(self.text, start_idx, lookahead=80):
+                if eh_citacao_de_parecer_sobre_requerimento(self.text, start_idx):
                     continue
+
+        # ignora citações do tipo:
+        # nº 16.969/2026, da Comissão dos Direitos da Mulher).
+        if fecha_parentese_logo_depois(self.text, start_idx, lookahead=80):
+            continue
 
                 next_match = re.search(
                     r"^(?:\s*)(Nº|nº)\s+(\d{2}\.?\d{3}/\d{4})",
