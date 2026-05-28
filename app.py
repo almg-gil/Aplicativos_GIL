@@ -2090,26 +2090,6 @@ class LegislativeProcessor:
             if numero_ano not in reqs_to_ignore:
                 requerimentos.append(["RQC", num_part, ano, "", "", "Aprovado"])
 
-        rqc_multiplos_aprovados_pattern = re.compile(
-            r"Submetidos\s+a\s+vota[cç][aã]o,\s*cada\s+um\s+por\s+sua\s+vez,\s*"
-            r"s[aã]o\s+aprovados\s+os\s+Requerimentos\s+n[º°o]s?\s+"
-            r"([\d\.\s,e]+/\d{4})",
-            re.IGNORECASE
-        )
-
-        for match in rqc_multiplos_aprovados_pattern.finditer(self.text):
-            lista = match.group(1)
-            ano = re.search(r"/\s*(\d{4})", lista).group(1)
-
-            numeros = re.findall(r"\d{1,5}(?:\.\d{3})?", lista.split("/")[0])
-
-            for num in numeros:
-                num_part = num.replace(".", "")
-                numero_ano = f"{num_part}/{ano}"
-
-                if numero_ano not in reqs_to_ignore:
-                    requerimentos.append(["RQC", num_part, ano, "", "", "Aprovado"])
-        
         rqc_recebido_apreciacao_pattern = re.compile(
             r"É\s+recebido\s+pela\s+presidência,\s+para\s+posterior\s+apreciação,\s+o\s+"
             r"Requerimento(?:s)?(?:\s+em\s+Comiss[aã]o)?(?:\s+n[º°o]|\s+N[º°O])?\s*"
@@ -2385,14 +2365,8 @@ class LegislativeProcessor:
             r"EMENDA Nº (\d+)\s+AO\s+(?:SUBSTITUTIVO Nº \d+\s+AO\s+)?PROJETO DE LEI(?: COMPLEMENTAR)? Nº (\d{1,4}\.?\d{0,3})/(\d{4})",
             re.IGNORECASE
         )
-        emenda_pattern = re.compile(
-            r"^\s*EMENDA\s+N[º°]\s*(\d+)\b",
-            re.MULTILINE | re.IGNORECASE
-        )
-        substitutivo_pattern = re.compile(
-            r"^\s*SUBSTITUTIVO\s+N[º°]\s*(\d+)\b",
-            re.MULTILINE | re.IGNORECASE
-        )
+        emenda_pattern = re.compile(r"^(?:\s*)EMENDA Nº (\d+)\s*", re.MULTILINE)
+        substitutivo_pattern = re.compile(r"^(?:\s*)SUBSTITUTIVO Nº (\d+)\s*", re.MULTILINE)
         project_pattern = re.compile(
             r"Conclusão\s*([\s\S]*?)"
             r"(Projeto de Lei|PL|Projeto de Resolução|PRE|Proposta de Emenda à Constituição|PEC|Projeto de Lei Complementar|PLC|Requerimento)\s+"
