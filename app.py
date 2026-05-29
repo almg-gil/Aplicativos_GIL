@@ -2093,7 +2093,7 @@ class LegislativeProcessor:
         # Captura votações em bloco com ano compartilhado, por exemplo:
         # "Submetidos a votação, cada um por sua vez, são aprovados os
         # Requerimentos nºs 16.851 e 17.016/2026."
-         rqc_pattern_aprovados_lista = re.compile(
+        rqc_pattern_aprovados_lista = re.compile(
             r"Submetidos\s+a\s+vota[cç][aã]o,\s*cada\s+um\s+por\s+sua\s+vez,\s*"
             r"s[aã]o\s+aprovados\s+os\s+"
             r"Requerimentos(?:\s+em\s+Comiss[aã]o)?\s+n[º°o]s?\s*"
