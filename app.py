@@ -2105,10 +2105,11 @@ class LegislativeProcessor:
             ano = match.group(2)
 
             for num in re.findall(r"\d{1,5}(?:\.\d{3})?", lista_numeros):
-                 num_part = num.replace(".", "")
-                  numero_ano = f"{num_part}/{ano}"
-                  if numero_ano not in reqs_to_ignore:
-                     requerimentos.append(["RQC", num_part, ano, "", "", "Aprovado"])
+                num_part = num.replace(".", "")
+                numero_ano = f"{num_part}/{ano}"
+                
+                if numero_ano not in reqs_to_ignore:
+                    requerimentos.append(["RQC", num_part, ano, "", "", "Aprovado"])
 
         rqc_recebido_apreciacao_pattern = re.compile(
             r"É\s+recebido\s+pela\s+presidência,\s+para\s+posterior\s+apreciação,\s+o\s+"
