@@ -3541,7 +3541,7 @@ def run_app():
             st.stop()
 
         if "data_ref" not in st.session_state:
-            st.session_state["data_ref"] = data_padrao_operacional()
+            st.session_state["data_ref"] = date.today()
 
         if "ajuste_msg" not in st.session_state:
             st.session_state["ajuste_msg"] = ""
@@ -3555,31 +3555,27 @@ def run_app():
             max_value=date.today()
         )
 
-        data_ajustada = ajustar_data_operacional(data_selecionada)
+        # Data real selecionada na interface.
+        # Esta será usada para consultar Licença/Férias no Google Calendar.
+        data_calendario = data_selecionada
 
-        if data_ajustada != st.session_state["data_ref"]:
-            st.session_state["data_ref"] = data_ajustada
+        # Data do diário a ser processado.
+        # Na segunda-feira, esta data vira o sábado anterior.
+        data_obj = ajustar_data_operacional(data_calendario)
 
-            if data_ajustada != data_selecionada:
-                st.session_state["ajuste_msg"] = (
-                    f"Data ajustada automaticamente para "
-                    f"{data_ajustada.strftime('%d/%m/%Y')}."
-                )
-            else:
-                st.session_state["ajuste_msg"] = ""
+        st.session_state["data_ref"] = data_calendario
 
-            st.rerun()
-
-        if st.session_state["ajuste_msg"]:
-            st.info(st.session_state["ajuste_msg"])
-            st.session_state["ajuste_msg"] = ""
-
-        data_obj = st.session_state["data_ref"]
         data = data_obj.strftime("%d/%m/%Y")
+
+        if data_obj != data_calendario:
+            st.info(
+                f"Diário a processar: {data_obj.strftime('%d/%m/%Y')}. "
+                f"Afastamentos considerados no calendário: {data_calendario.strftime('%d/%m/%Y')}."
+            )
 
         pode_processar = True
 
-        if data_obj > date.today():
+        if data_calendario > date.today():
             st.error("Data futura não é permitida.")
             pode_processar = False
         else:
@@ -3686,7 +3682,7 @@ def run_app():
                 df_adm = pd.DataFrame()
 
             # ================= DISTRIBUIÇÃO AUTOMÁTICA =================
-            indisponiveis, aviso_calendar = listar_indisponiveis_calendar(data_obj)
+            indisponiveis, aviso_calendar = listar_indisponiveis_calendar(data_calendario)
             if aviso_calendar:
                 st.warning(aviso_calendar)
 
