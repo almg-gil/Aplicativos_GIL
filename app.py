@@ -1739,6 +1739,12 @@ class LegislativeProcessor:
 
         self.text = "".join(parts)
 
+        self.text = re.sub(
+            r"(\d{1,5}(?:\.\d{1,3})?)\s*/\s*(\d{4})",
+            r"\1/\2",
+            self.text
+        )
+
     def _pagina_from_pos(self, pos: int) -> str:
         for start, end, pnum in self._offsets:
             if start <= pos < end:
