@@ -2474,13 +2474,15 @@ class AdministrativeProcessor:
 
         self.norma_publicada_regex = re.compile(
             r'^(DELIBERAÇÃO DA MESA|'
-            r'PORTARIA\s+(?:DGE|PSEC\s*/\s*DGE|PRES\s*/\s*DGE|PRES\s*/\s*PSEC)|'
-            r'ORDEM DE SERVIÇO PRES/PSEC)\s+N[º°]\s+([\d\.]+)\s*/\s*(\d{4})\s*$',
+            r'PORTARIA\s+(?:DGE|PSEC\s*/\s*DGE|PRES\s*/\s*DGE|PRES\s*/\s*PSEC|PRES\s*/\s*PSEC\s*/\s*DGE)|'
+            r'ORDEM DE SERVIÇO\s+(?:DGE|PSEC\s*/\s*DGE|PRES\s*/\s*PSEC|PRES\s*/\s*PSEC\s*/\s*DGE))'
+            r'\s+N[º°]\s+([\d\.]+(?:-[A-Z])?)\s*/\s*(\d{4})\s*$',
             re.IGNORECASE | re.MULTILINE
         )
 
         self.revogacoes_caput_regex = re.compile(
-            r'Ficam\s+revogados\s+os\s+seguintes\s+atos\s+normativos,'
+            r'Ficam\s+revogados\s+os\s+seguintes\s+atos'
+            r'(?:\s+e\s+dispositivos)?\s+normativos,'
             r'\s+sem\s+preju[ií]zo\s+dos\s+efeitos\s+por\s+eles\s+produzidos\s*:',
             re.IGNORECASE
         )
@@ -2488,6 +2490,10 @@ class AdministrativeProcessor:
         self.revogacao_simples_regex = re.compile(r'\bFic(?:a|am)\s+revogad(?:a|o|as|os)\b', re.IGNORECASE)
         self.sem_efeito_regex = re.compile(r'\bFic(?:a|am)\s+sem\s+efeito\b|\bTorn(?:a|am)\s+sem\s+efeito\b', re.IGNORECASE)
         self.prorrogacao_regex = re.compile(r'\bFic(?:a|am)\s+prorrogad(?:a|o|as|os)\b', re.IGNORECASE)
+        self.substituicao_regex = re.compile(
+            r'\bFic(?:a|am)\s+substitu[ií]d(?:a|o|as|os)\b',
+            re.IGNORECASE
+        )
         self.redacao_regex = re.compile(
             r'\bpassa\s+a\s+vigorar\b|\bpassam\s+a\s+vigorar\b|\bpassa\s+a\s+vigorar\s+com\s+a\s+seguinte\s+reda[cç][aã]o\b',
             re.IGNORECASE
@@ -2500,30 +2506,42 @@ class AdministrativeProcessor:
             re.IGNORECASE
         )
 
+        sigla_adm = (
+            rf'(?:DGE|PSEC\s*/\s*DGE|PRES\s*/\s*DGE|'
+            rf'PRES\s*/\s*PSEC|PRES\s*/\s*PSEC\s*/\s*DGE)'
+        )
+
+        qualificador_travessao = rf'(?:\s*{dash}\s*{sigla_adm}\s*{dash})?'
+
         self.norma_alterada_regex = re.compile(
             rf'\b('
-            rf'DELIBERAÇÃO\s+DA\s+MESA|'
-            rf'PORTARIA'
-            rf'(?:'
-                rf'\s+DA\s+PRESID[ÊE]NCIA\s+E\s+DA\s+DIRETORIA-GERAL'
+                rf'DELIBERAÇÃO\s+DA\s+MESA'
                 rf'|'
-                rf'\s+DA\s+1ª-SECRETARIA\s*{dash}\s*PSEC\s*{dash}\s*E\s+DA\s+DIRETORIA-GERAL\s*{dash}\s*DGE\s*{dash}'
+                rf'PORTARIA'
+                rf'(?:'
+                    rf'\s+DA\s+DIRETORIA-GERAL'
+                    rf'|\s+DA\s+PRESID[ÊE]NCIA\s+E\s+DA\s+DIRETORIA-GERAL'
+                    rf'|\s+DGE'
+                    rf'|\s+PSEC\s*/\s*DGE'
+                    rf'|\s+PRES\s*/\s*DGE'
+                    rf'|\s+PRES\s*/\s*PSEC'
+                    rf'|\s+PRES\s*/\s*PSEC\s*/\s*DGE'
+                rf')?'
+                rf'{qualificador_travessao}'
                 rf'|'
-                rf'\s+DA\s+DIRETORIA-GERAL(?:\s*{dash}\s*DGE\s*{dash})?'
-                rf'|'
-                rf'\s*PSEC\s*/\s*DGE'
-                rf'|'
-                rf'\s*PRES\s*/\s*DGE'
-                rf'|'
-                rf'\s*PRES\s*/\s*PSEC'
-                rf'|'
-                rf'\s*DGE'
-            rf')?'
-            rf'|'
-            rf'ORDEM\s+DE\s+SERVI[ÇC]O\s+PRES/PSEC|'
-            rf'ORDEM\s+DE\s+SERVI[ÇC]O\s+DA\s+PRESID[ÊE]NCIA\s+E\s+DA\s+1ª-SECRETARIA|'
-            rf'ORDEM\s+DE\s+SERVI[ÇC]O'
-            rf')\s*N[º°]\s*([\d\.]+)'
+                rf'ORDEM\s+DE\s+SERVI[ÇC]O'
+                rf'(?:'
+                    rf'\s+DA\s+PRESID[ÊE]NCIA'
+                    rf'(?:,\s*DA\s+1[ªº]\s*{dash}\s*SECRETARIA)?'
+                    rf'(?:\s+E\s+DA\s+DIRETORIA-GERAL)?'
+                    rf'|\s+DGE'
+                    rf'|\s+PSEC\s*/\s*DGE'
+                    rf'|\s+PRES\s*/\s*PSEC'
+                    rf'|\s+PRES\s*/\s*PSEC\s*/\s*DGE'
+                rf')?'
+                rf'{qualificador_travessao}'
+            rf')'
+            rf'\s*N[º°]\s*([\d\.]+(?:-[A-Z])?)'
             rf'(?:\s*/\s*(\d{{4}}))?'
             rf'(?:\s*,\s*de\s*[^;\.]*?(\d{{4}}))?',
             re.IGNORECASE
@@ -2560,14 +2578,18 @@ class AdministrativeProcessor:
         return f"{dia}/{mes}/{ano}"
 
     def _normalizar_sigla(self, tipo_txt_upper: str) -> str:
-        t = (tipo_txt_upper or "").upper()
-        if "DELIBERAÇÃO DA MESA" in t:
-            return "DLB"
-        if "PORTARIA" in t:
-            return "PRT"
-        if "ORDEM DE SERVI" in t:
-            return "OSV"
-        return t.strip()
+            t = (tipo_txt_upper or "").upper()
+            t = re.sub(r'\s+', ' ', t)
+            t = re.sub(r'\s*/\s*', '/', t)
+
+            if "DELIBERAÇÃO DA MESA" in t:
+                return "DLB"
+            if "PORTARIA" in t:
+                return "PRT"
+            if "ORDEM DE SERVI" in t:
+                return "OSV"
+
+            return t.strip()
 
     def _sigla_norma_publicada(self, tipo_raw: str) -> str:
         t = (tipo_raw or "").upper().strip()
@@ -2611,6 +2633,15 @@ class AdministrativeProcessor:
                 if start <= pos < end:
                     return pnum
             return ""
+
+        def _segmento_ate_proximo_artigo(bloco: str, pos: int) -> str:
+            trecho = bloco[pos:]
+            m_art = self.fim_lista_revogacoes_regex.search(trecho)
+
+            if m_art:
+                return trecho[:m_art.start()]
+
+            return trecho
 
         normas = []
         for m in self.norma_publicada_regex.finditer(full_text):
@@ -2696,9 +2727,14 @@ class AdministrativeProcessor:
                 segmento = after[:fim] if fim is not None else after
                 _extrair_alteracoes(segmento)
 
-            for gat in (self.revogacao_simples_regex, self.sem_efeito_regex, self.prorrogacao_regex):
+            for gat in (
+                self.substituicao_regex,
+                self.revogacao_simples_regex,
+                self.sem_efeito_regex,
+                self.prorrogacao_regex,
+            ):
                 for gm in gat.finditer(bloco):
-                    janela = bloco[gm.start(): gm.start() + 1200]
+                    janela = _segmento_ate_proximo_artigo(bloco, gm.start())
                     _extrair_alteracoes(janela)
 
             for gm in self.redacao_regex.finditer(bloco):
