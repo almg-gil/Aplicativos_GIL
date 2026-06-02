@@ -2553,7 +2553,8 @@ class AdministrativeProcessor:
             re.IGNORECASE
         )
         self.fecho_sala_mesa_regex = re.compile(
-            r'Sala\s+de\s+Reuni[õo]es\s+da\s+Mesa\s+da\s+Assembleia\s+Legislativa\s*,\s*'
+            r'Sala\s+de\s+Reuni[õo]es\s+da\s+Mesa\s+da\s+Assembleia'
+            r'(?:\s+Legislativa)?\s*,\s*'
             r'(\d{1,2})\s+de\s+([A-Za-zçÇãÃáÁéÉíÍóÓôÔúÚ]+)\s+de\s+(\d{4})',
             re.IGNORECASE
         )
