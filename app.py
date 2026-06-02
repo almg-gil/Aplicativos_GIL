@@ -2718,30 +2718,30 @@ class AdministrativeProcessor:
             seen_alteracoes = set()
 
             def _add_alt(chave: str):
-            nonlocal resultados
+                nonlocal resultados
 
-            chave = re.sub(r"\s+", " ", str(chave or "").strip().upper())
+                chave = re.sub(r"\s+", " ", str(chave or "").strip().upper())
 
-            if not chave:
-                return
+                if not chave:
+                    return
 
-            if chave in seen_alteracoes:
-                return
+                if chave in seen_alteracoes:
+                    return
+    
+                seen_alteracoes.add(chave)
 
-            seen_alteracoes.add(chave)
-
-            if linha["Alterações"] == "":
-                linha["Alterações"] = chave
-            else:
-                resultados.append({
-                    "Página": "",
-                    "Coluna": "",
-                    "Sanção": "",
-                    "Sigla": "",
-                    "Número": "",
-                    "Ano": "",
-                    "Alterações": chave
-                })
+                if linha["Alterações"] == "":
+                    linha["Alterações"] = chave
+                else:
+                    resultados.append({
+                        "Página": "",
+                        "Coluna": "",
+                        "Sanção": "",
+                        "Sigla": "",
+                        "Número": "",
+                        "Ano": "",
+                        "Alterações": chave
+                    })
 
             def _extrair_alteracoes(seg: str):
                 for alt in self.norma_alterada_regex.finditer(seg or ""):
