@@ -1146,24 +1146,52 @@ def montar_link_data(texto_data: str, url: str) -> str:
 
     return f'=HIPERLINK("{url}";"{texto_data}")'
 
+def montar_url_legislacao_mineira(tipo: str, numero, ano) -> str:
+    tipo_txt = str(tipo or "").strip().upper()
+    numero_txt = str(numero or "").strip().upper().replace(".", "")
+    ano_txt = str(ano or "").strip()
 
-def montar_link_numero_norma(tipo: str, numero, sancao: str) -> str:
-    numero_txt = str(numero).strip()
-    tipo_txt = str(tipo).strip().upper()
-    sancao_txt = str(sancao).strip()
+    if not tipo_txt or not numero_txt or not ano_txt:
+        return ""
+
+    # Ex.: 3-A, 4-A, 10-B
+    m = re.match(r"^(\d+)\s*-\s*([A-Z])$", numero_txt)
+    if m:
+        numero_base = m.group(1)
+        complemento = m.group(2)
+
+        return (
+            f"https://www.almg.gov.br/legislacao-mineira/"
+            f"{tipo_txt}/{numero_base}/{ano_txt}/{complemento}"
+        )
+
+    return (
+        f"https://www.almg.gov.br/legislacao-mineira/"
+        f"{tipo_txt}/{numero_txt}/{ano_txt}/"
+    )
+
+
+def montar_link_numero_norma(tipo: str, numero, sancao: str, ano: str = "") -> str:
+    numero_txt = str(numero or "").strip()
+    tipo_txt = str(tipo or "").strip().upper()
+    ano_txt = str(ano or "").strip()
 
     if not numero_txt or not tipo_txt:
         return numero_txt
 
-    ano = ""
-    m = re.search(r"(\d{4})$", sancao_txt)
-    if m:
-        ano = m.group(1)
+    if not ano_txt:
+        m = re.search(r"(\d{4})$", str(sancao or "").strip())
+        if m:
+            ano_txt = m.group(1)
 
-    if not ano:
+    if not ano_txt:
         return numero_txt
 
-    url = f"https://www.almg.gov.br/legislacao-mineira/{tipo_txt}/{numero_txt}/{ano}/"
+    url = montar_url_legislacao_mineira(tipo_txt, numero_txt, ano_txt)
+
+    if not url:
+        return numero_txt
+
     numero_txt_esc = numero_txt.replace('"', '""')
     url_esc = url.replace('"', '""')
 
@@ -1171,7 +1199,7 @@ def montar_link_numero_norma(tipo: str, numero, sancao: str) -> str:
 
 
 def montar_link_alteracao_norma(alteracao) -> str:
-    texto = str(alteracao).strip()
+    texto = str(alteracao or "").strip()
 
     if not texto:
         return ""
@@ -1188,7 +1216,10 @@ def montar_link_alteracao_norma(alteracao) -> str:
     if not tipo_txt or not numero_txt or not ano_txt:
         return texto
 
-    url = f"https://www.almg.gov.br/legislacao-mineira/{tipo_txt}/{numero_txt}/{ano_txt}/"
+    url = montar_url_legislacao_mineira(tipo_txt, numero_txt, ano_txt)
+
+    if not url:
+        return texto
 
     texto_esc = texto.replace('"', '""')
     url_esc = url.replace('"', '""')
@@ -1230,7 +1261,8 @@ def montar_linhas_normas(
         numero_link = montar_link_numero_norma(
             tipo=r.get("Tipo", ""),
             numero=r.get("Número", ""),
-            sancao=r.get("Sanção", "")
+            sancao=r.get("Sanção", ""),
+            ano=r.get("Ano", "")
         )
 
         alteracao = r.get("Alterações", "")
@@ -2686,23 +2718,30 @@ class AdministrativeProcessor:
             seen_alteracoes = set()
 
             def _add_alt(chave: str):
-                nonlocal resultados
-                if chave in seen_alteracoes:
-                    return
-                seen_alteracoes.add(chave)
+            nonlocal resultados
 
-                if linha["Alterações"] == "":
-                    linha["Alterações"] = chave
-                else:
-                    resultados.append({
-                        "Página": "",
-                        "Coluna": "",
-                        "Sanção": "",
-                        "Sigla": "",
-                        "Número": "",
-                        "Ano": "",
-                        "Alterações": chave
-                    })
+            chave = re.sub(r"\s+", " ", str(chave or "").strip().upper())
+
+            if not chave:
+                return
+
+            if chave in seen_alteracoes:
+                return
+
+            seen_alteracoes.add(chave)
+
+            if linha["Alterações"] == "":
+                linha["Alterações"] = chave
+            else:
+                resultados.append({
+                    "Página": "",
+                    "Coluna": "",
+                    "Sanção": "",
+                    "Sigla": "",
+                    "Número": "",
+                    "Ano": "",
+                    "Alterações": chave
+                })
 
             def _extrair_alteracoes(seg: str):
                 for alt in self.norma_alterada_regex.finditer(seg or ""):
@@ -2728,12 +2767,18 @@ class AdministrativeProcessor:
                 segmento = after[:fim] if fim is not None else after
                 _extrair_alteracoes(segmento)
 
-            for gat in (
+            gats_genericos = [
                 self.substituicao_regex,
-                self.revogacao_simples_regex,
                 self.sem_efeito_regex,
                 self.prorrogacao_regex,
-            ):
+            ]
+
+            # Se já houve caput específico de revogação, não processa
+            # "Ficam revogados" de novo pelo gatilho genérico.
+            if not cap:
+                gats_genericos.append(self.revogacao_simples_regex)
+
+            for gat in gats_genericos:
                 for gm in gat.finditer(bloco):
                     janela = _segmento_ate_proximo_artigo(bloco, gm.start())
                     _extrair_alteracoes(janela)
