@@ -2405,7 +2405,7 @@ class LegislativeProcessor:
         )
         emenda_pattern = re.compile(r"^(?:\s*)EMENDA Nº (\d+)\s*", re.MULTILINE)
         substitutivo_pattern = re.compile(r"^(?:\s*)SUBSTITUTIVO Nº (\d+)\s*", re.MULTILINE)
-       project_pattern = re.compile(
+        project_pattern = re.compile(
             r"Conclusão\s*([\s\S]*?)"
             r"(Projeto de Lei|PL|Projeto de Resolução|PRE|Proposta de Emenda à Constituição|PEC|Projeto de Lei Complementar|PLC|Requerimento)\s+"
             r"(?:n[º°o]|N[º°O])?\s*"
