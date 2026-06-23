@@ -2414,9 +2414,6 @@ class LegislativeProcessor:
             re.IGNORECASE | re.DOTALL
         )
 
-        # depois:
-        numero = re.sub(r"\D", "", last_project_match.group(3))
-
         for match in emenda_completa_pattern.finditer(clean_text):
             numero = match.group(2).replace(".", "")
             ano = match.group(3)
