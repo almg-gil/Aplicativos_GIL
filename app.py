@@ -1227,6 +1227,12 @@ def montar_link_alteracao_norma(alteracao) -> str:
     return f'=HIPERLINK("{url_esc}";"{texto_esc}")'
 
 
+def normalizar_numero_proposicao(numero) -> str:
+    numero_txt = str(numero or "").strip()
+    numero_txt = re.sub(r"\s+", "", numero_txt)
+    numero_txt = numero_txt.replace(".", "")
+    return numero_txt
+
 def montar_link_numero_proposicao(tipo: str, numero, ano) -> str:
     numero_txt = str(numero).strip()
     tipo_txt = str(tipo).strip().upper()
@@ -2437,7 +2443,7 @@ class LegislativeProcessor:
             if last_project_match:
                 sigla_raw = last_project_match.group(2)
                 sigla = SIGLA_MAP_PARECER.get(sigla_raw.lower(), sigla_raw.upper())
-                numero = last_project_match.group(3).replace(".", "")
+                numero = normalizar_numero_proposicao(last_project_match.group(3))
                 ano = last_project_match.group(4)
 
                 if len(ano) == 2:
