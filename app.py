@@ -2393,8 +2393,8 @@ class LegislativeProcessor:
 
         clean_text = ignore_edital_emenda_pattern.sub("", clean_text)
 
-        emenda_projeto_pattern = re.compile(
-            r"emendas?\s+ao\s+Projeto\s+de\s+Lei"
+        emendas_ao_projeto_pattern = re.compile(
+            r"\bemendas\s+ao\s+Projeto\s+de\s+Lei"
             r"(?P<complementar>\s+Complementar)?\s+"
             r"n[º°o]?\s*"
             r"(?P<numero>\d{1,5}(?:\.\d{1,3})?)\s*/\s*"
@@ -2402,7 +2402,18 @@ class LegislativeProcessor:
             re.IGNORECASE
         )
 
-        for match in emenda_projeto_pattern.finditer(clean_text):
+        for match in emendas_ao_projeto_pattern.finditer(clean_text):
+            # Confirma que o bloco fala de emendas numeradas.
+            # Isso evita capturar títulos como "EMENDA AO PROJETO DE LEI Nº ..."
+            janela = clean_text[match.start():match.end() + 700]
+
+            if not re.search(
+                r"\bemenda(?:s)?\s+(?:n[º°o]s?\s*)?\d+\b",
+                janela,
+                re.IGNORECASE
+            ):
+                continue
+
             numero_raw = match.group("numero").replace(".", "")
             ano = match.group("ano")
             sigla = "PLC" if match.group("complementar") else "PL"
