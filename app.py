@@ -2440,6 +2440,31 @@ class LegislativeProcessor:
             r"(\d{2,4})",
             re.IGNORECASE | re.DOTALL
         )
+        def veio_de_anexese_ao_requerimento(
+            texto: str,
+            title_start: int,
+            numero: str,
+            ano: str,
+            janela: int = 1200
+        ) -> bool:
+            contexto = texto[max(0, title_start - janela):title_start]
+
+            numero_norm = normalizar_numero_proposicao(numero)
+            ano_norm = str(ano or "").strip()
+
+            for m in re.finditer(
+                r"\bAnexe-se\s+ao\s+Requerimento\s+n[º°o]?\s*"
+                r"(\d{1,5}(?:\.\d{0,3})?)\s*/\s*(\d{4})",
+                contexto,
+                flags=re.IGNORECASE | re.DOTALL
+            ):
+                num_ref = normalizar_numero_proposicao(m.group(1))
+                ano_ref = m.group(2)
+
+                if num_ref == numero_norm and ano_ref == ano_norm:
+                    return True
+
+            return False
 
         for match in emenda_completa_pattern.finditer(clean_text):
             numero = match.group(2).replace(".", "")
@@ -2470,10 +2495,21 @@ class LegislativeProcessor:
                 if len(ano) == 2:
                     ano = f"20{ano}"
 
-                project_key = (sigla, numero, ano)
                 item_type = "EMENDA" if "EMENDA" in title_match.group(0).upper() else "SUBSTITUTIVO"
+
+                if sigla in {"RQN", "RQC"} and veio_de_anexese_ao_requerimento(
+                    clean_text,
+                    title_match.start(),
+                    numero,
+                    ano
+                ):
+                    continue
+
+                project_key = (sigla, numero, ano)
+
                 if project_key not in found_projects:
                     found_projects[project_key] = set()
+
                 found_projects[project_key].add(item_type)
 
         emenda_projeto_lei_pattern = re.compile(
