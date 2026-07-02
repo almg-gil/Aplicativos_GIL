@@ -2393,14 +2393,21 @@ class LegislativeProcessor:
 
         clean_text = ignore_edital_emenda_pattern.sub("", clean_text)
 
-        emenda_projeto_lei_pattern = re.compile(
-            r"EMENDAS AO PROJETO DE LEI Nº (\d{1,4}\.?\d{0,3})/(\d{4})",
-            re.IGNORECASE | re.DOTALL
+        emenda_projeto_pattern = re.compile(
+            r"emendas?\s+ao\s+Projeto\s+de\s+Lei"
+            r"(?P<complementar>\s+Complementar)?\s+"
+            r"n[º°o]?\s*"
+            r"(?P<numero>\d{1,5}(?:\.\d{1,3})?)\s*/\s*"
+            r"(?P<ano>\d{4})",
+            re.IGNORECASE
         )
-        for match in emenda_projeto_lei_pattern.finditer(clean_text):
-            numero_raw = match.group(1).replace(".", "")
-            ano = match.group(2)
-            project_key = ("PL", numero_raw, ano)
+
+        for match in emenda_projeto_pattern.finditer(clean_text):
+            numero_raw = match.group("numero").replace(".", "")
+            ano = match.group("ano")
+            sigla = "PLC" if match.group("complementar") else "PL"
+
+            project_key = (sigla, numero_raw, ano)
             if project_key not in found_projects:
                 found_projects[project_key] = set()
             found_projects[project_key].add("EMENDA")
@@ -2409,7 +2416,10 @@ class LegislativeProcessor:
             r"EMENDA Nº (\d+)\s+AO\s+(?:SUBSTITUTIVO Nº \d+\s+AO\s+)?PROJETO DE LEI(?: COMPLEMENTAR)? Nº (\d{1,4}\.?\d{0,3})/(\d{4})",
             re.IGNORECASE
         )
-        emenda_pattern = re.compile(r"^(?:\s*)EMENDA Nº (\d+)\s*", re.MULTILINE)
+        emenda_pattern = re.compile(
+            r"^\s*EMENDA(?:\s+N[º°o])?\s+(\d+)\b",
+            re.MULTILINE | re.IGNORECASE
+        )
         substitutivo_pattern = re.compile(r"^(?:\s*)SUBSTITUTIVO Nº (\d+)\s*", re.MULTILINE)
         project_pattern = re.compile(
             r"Conclusão\s*([\s\S]*?)"
