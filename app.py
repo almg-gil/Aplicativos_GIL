@@ -2196,7 +2196,10 @@ class LegislativeProcessor:
 
 
         rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*d[ao]s?\b", re.MULTILINE)
-        rqc_old_pattern = re.compile(r"^(?:\s*)(nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*d[ao]s?\b", re.MULTILINE)
+        rqc_old_pattern = re.compile(
+            r"^(?:\s*)(nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(?:d[ao]s?\b|em\s+que\s+requer(?:em)?\b)",
+            re.MULTILINE
+        )
 
         def eh_citacao_de_parecer_sobre_requerimento(texto: str, start_idx: int) -> bool:
             antes = re.sub(
