@@ -2421,6 +2421,29 @@ class LegislativeProcessor:
 
     def process_pareceres(self) -> pd.DataFrame:
         found_projects = {}
+
+        def registrar_tipo(sigla: str, numero: str, ano: str, tipo_item: str):
+            sigla = str(sigla or "").strip().upper()
+            numero = normalizar_numero_proposicao(numero)
+            ano = str(ano or "").strip()
+
+            if len(ano) == 2:
+                ano = f"20{ano}"
+
+            if not sigla or not numero or not ano or not tipo_item:
+                return
+
+            project_key = (sigla, numero, ano)
+
+            if project_key not in found_projects:
+                found_projects[project_key] = set()
+
+            found_projects[project_key].add(tipo_item)
+
+        def sigla_por_tipo(tipo_raw: str) -> str:
+            tipo_raw = re.sub(r"\s+", " ", str(tipo_raw or "").strip())
+            return SIGLA_MAP_PARECER.get(tipo_raw.lower(), tipo_raw.upper())
+
         pareceres_start_pattern = re.compile(r"TRAMITAÇÃO DE PROPOSIÇÕES")
         votacao_pattern = re.compile(
             r"(Votação do Requerimento[\s\S]*?)(?=Votação do Requerimento|Diário do Legislativo|Projetos de Lei Complementar|Diário do Legislativo - Poder Legislativo|$)",
@@ -2436,182 +2459,148 @@ class LegislativeProcessor:
             clean_text = clean_text.replace(match.group(0), "")
 
         ignore_edital_emenda_pattern = re.compile(
-            r"e votar,\s*no\s*\d+º\s*turno,\s*o\s*Parecer\s*sobre\s+a\s*Emenda\s*n[º°o]?\s*\d+\s*ao\s*Projeto\s*de\s*Lei(?:\s*Complementar)?\s*n[º°o]?\s*\d{1,4}\.?\d{0,3}/\d{4}.*?e\s*de\s*receber,\s*discutir\s*e\s*votar\s*proposições\s*da\s*comissão",
+            r"e votar,\s*no\s*\d+º\s*turno,\s*o\s*Parecer\s*sobre\s*a\s*Emenda\s*n[º°o]?\s*\d+\s*ao\s*Projeto\s*de\s*Lei(?:\s*Complementar)?\s*n[º°o]?\s*\d{1,4}\.?\d{0,3}/\d{4}.*?e\s*de\s*receber,\s*discutir\s*e\s*votar\s*proposições\s*da\s*comissão",
             re.IGNORECASE | re.DOTALL
         )
 
         clean_text = ignore_edital_emenda_pattern.sub("", clean_text)
 
-        emendas_ao_projeto_pattern = re.compile(
-            r"\bemendas\s+ao\s+Projeto\s+de\s+Lei"
-            r"(?P<complementar>\s+Complementar)?\s+"
-            r"n[º°o]?\s*"
-            r"(?P<numero>\d{1,5}(?:\.\d{1,3})?)\s*/\s*"
-            r"(?P<ano>\d{4})",
+        tipo_prop_regex_bloco = (
+            r"Projeto de Lei Complementar|"
+            r"Projeto de Lei|"
+            r"Projeto de Resolução|"
+            r"Proposta de Emenda à Constituição|"
+            r"Requerimento|"
+            r"PLC|PL|PRE|PEC|RQN|RQC"
+        )
+        numero_prop_regex_bloco = r"\d{1,5}(?:\s*\.\s*\d{1,3})?"
+
+        # Captura emendas explícitas que já trazem a proposição no próprio título.
+        # Este padrão é seguro porque não depende do "último projeto anterior".
+        emenda_completa_pattern = re.compile(
+            rf"\bEMENDA\s+N[º°O]?\s+\d+\s+AO\s+"
+            rf"(?:SUBSTITUTIVO\s+N[º°O]?\s+\d+\s+AO\s+)?"
+            rf"({tipo_prop_regex_bloco})\s+N[º°O]?\s*"
+            rf"({numero_prop_regex_bloco})\s*/\s*(\d{{2,4}})",
             re.IGNORECASE
+        )
+
+        for match in emenda_completa_pattern.finditer(clean_text):
+            sigla = sigla_por_tipo(match.group(1))
+            numero = match.group(2)
+            ano = match.group(3)
+            registrar_tipo(sigla, numero, ano, "EMENDA")
+
+        # Captura títulos do tipo "EMENDAS AO PROJETO DE LEI Nº ..." apenas
+        # quando eles aparecem como linha de título e possuem emenda numerada logo depois.
+        emendas_ao_projeto_pattern = re.compile(
+            rf"^\s*EMENDAS\s+AO\s+({tipo_prop_regex_bloco})\s+N[º°O]?\s*"
+            rf"({numero_prop_regex_bloco})\s*/\s*(\d{{2,4}})",
+            re.IGNORECASE | re.MULTILINE
         )
 
         for match in emendas_ao_projeto_pattern.finditer(clean_text):
-            # Confirma que o bloco fala de emendas numeradas.
-            # Isso evita capturar títulos como "EMENDA AO PROJETO DE LEI Nº ..."
-            janela = clean_text[match.start():match.end() + 700]
+            janela = clean_text[match.start():match.end() + 1000]
 
-            if not re.search(
-                r"\bemenda(?:s)?\s+(?:n[º°o]s?\s*)?\d+\b",
-                janela,
-                re.IGNORECASE
-            ):
+            if not re.search(r"^\s*EMENDA\s+N[º°O]?\s+\d+\s*$", janela, re.IGNORECASE | re.MULTILINE):
                 continue
 
-            numero_raw = match.group("numero").replace(".", "")
-            ano = match.group("ano")
-            sigla = "PLC" if match.group("complementar") else "PL"
+            sigla = sigla_por_tipo(match.group(1))
+            numero = match.group(2)
+            ano = match.group(3)
+            registrar_tipo(sigla, numero, ano, "EMENDA")
 
-            project_key = (sigla, numero_raw, ano)
-            if project_key not in found_projects:
-                found_projects[project_key] = set()
-            found_projects[project_key].add("EMENDA")
-
-        emenda_completa_pattern = re.compile(
-            r"EMENDA Nº (\d+)\s+AO\s+(?:SUBSTITUTIVO Nº \d+\s+AO\s+)?PROJETO DE LEI(?: COMPLEMENTAR)? Nº (\d{1,4}\.?\d{0,3})/(\d{4})",
-            re.IGNORECASE
-        )
         emenda_pattern = re.compile(
-            r"^\s*EMENDA(?:\s+N[º°o])?\s+(\d+)\b",
+            r"^\s*EMENDA\s+N[º°O]?\s+\d+\s*$",
             re.MULTILINE | re.IGNORECASE
         )
 
-        substitutivo_pattern = re.compile(r"^(?:\s*)SUBSTITUTIVO Nº (\d+)\s*", re.MULTILINE)
-        project_pattern = re.compile(
-            r"Conclusão\s*([\s\S]*?)"
-            r"(Projeto de Lei|PL|Projeto de Resolução|PRE|Proposta de Emenda à Constituição|PEC|Projeto de Lei Complementar|PLC|Requerimento)\s+"
-            r"(?:n[º°o]|N[º°O])?\s*"
-            r"(\d{1,5}(?:\s*\.\s*\d{1,3})?)\s*/\s*"
-            r"(\d{2,4})",
-            re.IGNORECASE | re.DOTALL
+        substitutivo_pattern = re.compile(
+            r"^\s*SUBSTITUTIVO\s+N[º°O]?\s+\d+\s*$",
+            re.MULTILINE | re.IGNORECASE
         )
-        def match_veio_de_anexese_ao_requerimento(project_match: re.Match) -> bool:
-            trecho = project_match.group(0) or ""
-            trecho = re.sub(r"\s+", " ", trecho).strip()
 
-            return bool(re.search(
-                r"\bAnexe-se\s+ao\s+Requerimento\s+n[º°o]?\s*"
-                r"\d{1,5}(?:\.\d{0,3})?\s*/\s*\d{4}",
-                trecho,
-                flags=re.IGNORECASE
-            ))
+        parecer_header_pattern = re.compile(
+            rf"^\s*PARECER\b[\s\S]{{0,260}}?"
+            rf"\b({tipo_prop_regex_bloco})\s+"
+            rf"(?:n[º°o]|N[º°O])?\s*"
+            rf"({numero_prop_regex_bloco})\s*/\s*(\d{{2,4}})",
+            re.IGNORECASE | re.MULTILINE
+        )
 
-        for match in emenda_completa_pattern.finditer(clean_text):
-            numero = match.group(2).replace(".", "")
-            ano = match.group(3)
-            sigla = "PLC" if "COMPLEMENTAR" in match.group(0).upper() else "PL"
-            project_key = (sigla, numero, ano)
-            if project_key not in found_projects:
-                    found_projects[project_key] = set()
-                    found_projects[project_key].add("EMENDA")
-
-            tipo_prop_regex_bloco = (
-                  r"Projeto de Lei Complementar|"
-                  r"Projeto de Lei|"
-                  r"Projeto de Resolução|"
-                  r"Proposta de Emenda à Constituição|"
-                  r"Requerimento|"
-                  r"PLC|PL|PRE|PEC|RQN|RQC"
-               )
-
-            numero_prop_regex_bloco = r"\d{1,5}(?:\s*\.\s*\d{1,3})?"
-
-            parecer_header_pattern = re.compile(
-                rf"^\s*PARECER\b[\s\S]{{0,260}}?"
-                rf"\b({tipo_prop_regex_bloco})\s+"
-                rf"(?:n[º°o]|N[º°O])?\s*"
-                rf"({numero_prop_regex_bloco})\s*/\s*(\d{{2,4}})",
-                re.IGNORECASE | re.MULTILINE
-            )
-
-            emenda_na_conclusao_pattern = re.compile(
-                r"\b(?:"
-                r"com\s+(?:a|as)\s+Emenda(?:s)?|"
-                r"pela\s+aprova[cç][aã]o\s+d(?:a|as)\s+Emenda(?:s)?|"
-                r"pela\s+rejei[cç][aã]o\s+d(?:a|as)\s+Emenda(?:s)?|"
-                r"apresentamos\s+(?:a\s+seguir\s+)?(?:a|as)\s+Emenda(?:s)?"
-                r")\b",
-                re.IGNORECASE
-            )
-
-            substitutivo_na_conclusao_pattern = re.compile(
-                r"\b(?:"
-                r"na\s+forma\s+do\s+Substitutivo|"
-                r"com\s+o\s+Substitutivo|"
-                r"pela\s+aprova[cç][aã]o\s+do\s+Substitutivo|"
-                r"apresentamos\s+(?:a\s+seguir\s+)?o\s+Substitutivo"
-                r")\b",
-                re.IGNORECASE
-            )
-
-            headers = list(parecer_header_pattern.finditer(clean_text))
-
-            for i, header in enumerate(headers):
-                bloco_inicio = header.start()
-                bloco_fim = headers[i + 1].start() if i + 1 < len(headers) else len(clean_text)
-                bloco = clean_text[bloco_inicio:bloco_fim]
-
-                sigla_raw = header.group(1)
-                sigla = SIGLA_MAP_PARECER.get(sigla_raw.lower(), sigla_raw.upper())
-                numero = normalizar_numero_proposicao(header.group(2))
-                ano = header.group(3)
-
-                if len(ano) == 2:
-                    ano = f"20{ano}"
-
-                project_key = (sigla, numero, ano)
-
-                conclusoes = list(re.finditer(
-                    r"^\s*Conclus[aã]o\s*$",
-                    bloco,
-                    re.IGNORECASE | re.MULTILINE
-                ))
-
-                # A classificação deve sair da conclusão ou do texto de emenda/substitutivo
-                # imediatamente publicado dentro do mesmo parecer.
-                trecho_decisivo = bloco[conclusoes[-1].start():] if conclusoes else bloco[-1800:]
-
-                tem_emenda = (
-                    emenda_na_conclusao_pattern.search(trecho_decisivo)
-                    or emenda_pattern.search(trecho_decisivo)
-                )
-
-                tem_substitutivo = (
-                    substitutivo_na_conclusao_pattern.search(trecho_decisivo)
-                    or substitutivo_pattern.search(trecho_decisivo)
-                 )
-
-                if tem_emenda:
-                    if project_key not in found_projects:
-                    found_projects[project_key] = set()
-                    found_projects[project_key].add("EMENDA")
-
-                if tem_substitutivo:
-                    if project_key not in found_projects:
-                        found_projects[project_key] = set()
-                    found_projects[project_key].add("SUBSTITUTIVO")
-
-        emenda_projeto_lei_pattern = re.compile(
-            r"EMENDAS AO PROJETO DE LEI Nº (\d{1,4}\.?\d{0,3})/(\d{4})",
+        emenda_na_conclusao_pattern = re.compile(
+            r"\b(?:"
+            r"com\s+(?:a|as)\s+Emenda(?:s)?|"
+            r"pela\s+aprova[cç][aã]o\s+d(?:a|as)\s+Emenda(?:s)?|"
+            r"pela\s+rejei[cç][aã]o\s+d(?:a|as)\s+Emenda(?:s)?|"
+            r"apresentamos\s+(?:a\s+seguir\s+)?(?:a|as)\s+Emenda(?:s)?"
+            r")\b",
             re.IGNORECASE
         )
-        for match in emenda_projeto_lei_pattern.finditer(clean_text):
-            numero_raw = match.group(1).replace(".", "")
-            ano = match.group(2)
-            project_key = ("PL", numero_raw, ano)
-            if project_key not in found_projects:
-                found_projects[project_key] = set()
-            found_projects[project_key].add("EMENDA")
+
+        substitutivo_na_conclusao_pattern = re.compile(
+            r"\b(?:"
+            r"na\s+forma\s+do\s+Substitutivo|"
+            r"com\s+o\s+Substitutivo|"
+            r"pela\s+aprova[cç][aã]o\s+do\s+Substitutivo|"
+            r"apresentamos\s+(?:a\s+seguir\s+)?o\s+Substitutivo"
+            r")\b",
+            re.IGNORECASE
+        )
+
+        headers = list(parecer_header_pattern.finditer(clean_text))
+
+        for i, header in enumerate(headers):
+            bloco_inicio = header.start()
+            bloco_fim = headers[i + 1].start() if i + 1 < len(headers) else len(clean_text)
+            bloco = clean_text[bloco_inicio:bloco_fim]
+
+            sigla = sigla_por_tipo(header.group(1))
+            numero = normalizar_numero_proposicao(header.group(2))
+            ano = header.group(3)
+
+            if len(ano) == 2:
+                ano = f"20{ano}"
+
+            conclusoes = list(re.finditer(
+                r"^\s*Conclus[aã]o\s*$",
+                bloco,
+                re.IGNORECASE | re.MULTILINE
+            ))
+
+            # A classificação deve sair da conclusão ou de texto de emenda/substitutivo
+            # imediatamente publicado dentro do mesmo parecer, nunca do parecer seguinte.
+            trecho_decisivo = bloco[conclusoes[-1].start():] if conclusoes else bloco[-1800:]
+
+            tem_emenda = (
+                emenda_na_conclusao_pattern.search(trecho_decisivo)
+                or emenda_pattern.search(trecho_decisivo)
+            )
+
+            tem_substitutivo = (
+                substitutivo_na_conclusao_pattern.search(trecho_decisivo)
+                or substitutivo_pattern.search(trecho_decisivo)
+            )
+
+            if tem_emenda:
+                registrar_tipo(sigla, numero, ano, "EMENDA")
+
+            if tem_substitutivo:
+                registrar_tipo(sigla, numero, ano, "SUBSTITUTIVO")
 
         pareceres = []
         for (sigla, numero, ano), types in found_projects.items():
-            type_str = "SUB/EMENDA" if len(types) > 1 else list(types)[0]
-            pareceres.append([sigla, numero, ano, type_str])
+            if "SUBSTITUTIVO" in types and "EMENDA" in types:
+                type_str = "SUB/EMENDA"
+            elif "SUBSTITUTIVO" in types:
+                type_str = "SUBSTITUTIVO"
+            elif "EMENDA" in types:
+                type_str = "EMENDA"
+            else:
+                type_str = ""
+
+            if type_str:
+                pareceres.append([sigla, numero, ano, type_str])
 
         return pd.DataFrame(pareceres, columns=["Sigla", "Número", "Ano", "Tipo"])
 
