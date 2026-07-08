@@ -2420,6 +2420,19 @@ class LegislativeProcessor:
         )
 
     def process_pareceres(self) -> pd.DataFrame:
+        """
+        Extrai somente pareceres que publicam texto novo de emenda ou substitutivo.
+
+        Regra principal:
+        - Não usa a seção "TRAMITAÇÃO DE PROPOSIÇÕES" como delimitador.
+        - Não considera simples menções como "na forma do Substitutivo nº 1" ou
+          "com a Emenda nº 1".
+        - Só registra quando houver texto efetivamente publicado:
+            1) linha própria "SUBSTITUTIVO Nº ..." dentro do próprio parecer;
+            2) linha própria "EMENDA Nº ..." dentro do próprio parecer;
+            3) título explícito "EMENDA Nº ... AO PROJETO ...";
+            4) título explícito "EMENDAS AO PROJETO ..." seguido de emenda numerada.
+        """
         found_projects = {}
 
         def registrar_tipo(sigla: str, numero: str, ano: str, tipo_item: str):
@@ -2444,122 +2457,129 @@ class LegislativeProcessor:
             tipo_raw = re.sub(r"\s+", " ", str(tipo_raw or "").strip())
             return SIGLA_MAP_PARECER.get(tipo_raw.lower(), tipo_raw.upper())
 
-        pareceres_start_pattern = re.compile(r"TRAMITAÇÃO DE PROPOSIÇÕES")
-        votacao_pattern = re.compile(
-            r"(Votação do Requerimento[\s\S]*?)(?=Votação do Requerimento|Diário do Legislativo|Projetos de Lei Complementar|Diário do Legislativo - Poder Legislativo|$)",
-            re.IGNORECASE
-        )
-        pareceres_start = pareceres_start_pattern.search(self.text)
-        if not pareceres_start:
-            return pd.DataFrame(columns=["Sigla", "Número", "Ano", "Tipo"])
-
-        pareceres_text = self.text[pareceres_start.end():]
-        clean_text = pareceres_text
-        for match in votacao_pattern.finditer(pareceres_text):
-            clean_text = clean_text.replace(match.group(0), "")
-
-        ignore_edital_emenda_pattern = re.compile(
-            r"e votar,\s*no\s*\d+º\s*turno,\s*o\s*Parecer\s*sobre\s*a\s*Emenda\s*n[º°o]?\s*\d+\s*ao\s*Projeto\s*de\s*Lei(?:\s*Complementar)?\s*n[º°o]?\s*\d{1,4}\.?\d{0,3}/\d{4}.*?e\s*de\s*receber,\s*discutir\s*e\s*votar\s*proposições\s*da\s*comissão",
-            re.IGNORECASE | re.DOTALL
-        )
-
-        clean_text = ignore_edital_emenda_pattern.sub("", clean_text)
-
-        tipo_prop_regex_bloco = (
+        tipo_prop_regex = (
             r"Projeto de Lei Complementar|"
             r"Projeto de Lei|"
             r"Projeto de Resolução|"
             r"Proposta de Emenda à Constituição|"
-            r"Requerimento|"
-            r"PLC|PL|PRE|PEC|RQN|RQC"
+            r"PLC|PL|PRE|PEC"
         )
-        numero_prop_regex_bloco = r"\d{1,5}(?:\s*\.\s*\d{1,3})?"
+        numero_prop_regex = r"\d{1,5}(?:\s*\.\s*\d{1,3})?"
 
-        # Captura emendas explícitas que já trazem a proposição no próprio título.
-        # Este padrão é seguro porque não depende do "último projeto anterior".
+        texto = self.text
+
+        # Remove trechos típicos de votação de requerimento para reduzir ruído,
+        # mas sem depender de marcador de seção.
+        votacao_pattern = re.compile(
+            r"(Votação do Requerimento[\s\S]*?)"
+            r"(?=Votação do Requerimento|^\s*PARECER\b|Diário do Legislativo - Poder Legislativo|$)",
+            re.IGNORECASE | re.MULTILINE
+        )
+        texto = votacao_pattern.sub("", texto)
+
+        # 1) Emenda cujo próprio título informa a proposição.
         emenda_completa_pattern = re.compile(
             rf"^\s*EMENDA\s+N[º°O]?\s+\d+\s+AO\s+"
             rf"(?:SUBSTITUTIVO\s+N[º°O]?\s+\d+\s+AO\s+)?"
-            rf"({tipo_prop_regex_bloco})\s+N[º°O]?\s*"
-            rf"({numero_prop_regex_bloco})\s*/\s*(\d{{2,4}})",
+            rf"({tipo_prop_regex})\s+N[º°O]?\s*"
+            rf"({numero_prop_regex})\s*/\s*(\d{{2,4}})\b",
             re.IGNORECASE | re.MULTILINE
         )
 
-        for match in emenda_completa_pattern.finditer(clean_text):
-            sigla = sigla_por_tipo(match.group(1))
-            numero = match.group(2)
-            ano = match.group(3)
-            registrar_tipo(sigla, numero, ano, "EMENDA")
+        for match in emenda_completa_pattern.finditer(texto):
+            registrar_tipo(
+                sigla_por_tipo(match.group(1)),
+                match.group(2),
+                match.group(3),
+                "EMENDA"
+            )
 
-        # Captura títulos do tipo "EMENDAS AO PROJETO DE LEI Nº ..." apenas
-        # quando eles aparecem como linha de título e possuem emenda numerada logo depois.
+        # 2) Título coletivo "EMENDAS AO PROJETO..." seguido de emenda numerada.
         emendas_ao_projeto_pattern = re.compile(
-            rf"^\s*EMENDAS\s+AO\s+({tipo_prop_regex_bloco})\s+N[º°O]?\s*"
-            rf"({numero_prop_regex_bloco})\s*/\s*(\d{{2,4}})",
+            rf"^\s*EMENDAS\s+AO\s+({tipo_prop_regex})\s+N[º°O]?\s*"
+            rf"({numero_prop_regex})\s*/\s*(\d{{2,4}})\b",
             re.IGNORECASE | re.MULTILINE
         )
 
-        for match in emendas_ao_projeto_pattern.finditer(clean_text):
-            janela = clean_text[match.start():match.end() + 1000]
-
-            if not re.search(r"^\s*EMENDA\s+N[º°O]?\s+\d+\s*$", janela, re.IGNORECASE | re.MULTILINE):
-                continue
-
-            sigla = sigla_por_tipo(match.group(1))
-            numero = match.group(2)
-            ano = match.group(3)
-            registrar_tipo(sigla, numero, ano, "EMENDA")
-
-        emenda_pattern = re.compile(
-            r"^\s*EMENDA\s+N[º°O]?\s+\d+\s*$",
-            re.MULTILINE | re.IGNORECASE
+        proximo_titulo_ou_parecer_pattern = re.compile(
+            r"^\s*(?:PARECER\b|EMENDAS\s+AO\s+|PROJETO\s+DE\s+LEI\b|REQUERIMENTOS\b|COMUNICAÇÕES\b)",
+            re.IGNORECASE | re.MULTILINE
         )
 
-        substitutivo_pattern = re.compile(
-            r"^\s*SUBSTITUTIVO\s+N[º°O]?\s+\d+\s*$",
-            re.MULTILINE | re.IGNORECASE
-        )
+        for match in emendas_ao_projeto_pattern.finditer(texto):
+            trecho_depois = texto[match.end():]
+            corte = proximo_titulo_ou_parecer_pattern.search(trecho_depois)
+            bloco_emendas = trecho_depois[:corte.start()] if corte else trecho_depois[:2000]
 
+            if re.search(r"^\s*EMENDA\s+N[º°O]?\s+\d+\b", bloco_emendas, re.IGNORECASE | re.MULTILINE):
+                registrar_tipo(
+                    sigla_por_tipo(match.group(1)),
+                    match.group(2),
+                    match.group(3),
+                    "EMENDA"
+                )
+
+        # 3) Pareceres: associa texto próprio de emenda/substitutivo ao cabeçalho do próprio parecer.
         parecer_header_pattern = re.compile(
-            rf"^\s*PARECER\b[\s\S]{{0,260}}?"
-            rf"\b({tipo_prop_regex_bloco})\s+"
+            rf"^\s*PARECER\b[\s\S]{{0,360}}?"
+            rf"\b({tipo_prop_regex})\s+"
             rf"(?:n[º°o]|N[º°O])?\s*"
-            rf"({numero_prop_regex_bloco})\s*/\s*(\d{{2,4}})",
+            rf"({numero_prop_regex})\s*/\s*(\d{{2,4}})\b",
             re.IGNORECASE | re.MULTILINE
         )
 
-        headers = list(parecer_header_pattern.finditer(clean_text))
+        emenda_titulo_pattern = re.compile(
+            r"^\s*EMENDA\s+N[º°O]?\s+\d+\s*$",
+            re.IGNORECASE | re.MULTILINE
+        )
+        substitutivo_titulo_pattern = re.compile(
+            r"^\s*SUBSTITUTIVO\s+N[º°O]?\s+\d+\s*$",
+            re.IGNORECASE | re.MULTILINE
+        )
+
+        headers = list(parecer_header_pattern.finditer(texto))
 
         for i, header in enumerate(headers):
             bloco_inicio = header.start()
-            bloco_fim = headers[i + 1].start() if i + 1 < len(headers) else len(clean_text)
-            bloco = clean_text[bloco_inicio:bloco_fim]
+            bloco_fim = headers[i + 1].start() if i + 1 < len(headers) else len(texto)
+            bloco = texto[bloco_inicio:bloco_fim]
 
-            sigla = sigla_por_tipo(header.group(1))
-            numero = normalizar_numero_proposicao(header.group(2))
-            ano = header.group(3)
+            # Evita que uma ata longa ou uma ordem do dia seja tratada como parecer.
+            # Um parecer real tem Relatório/Fundamentação/Conclusão ou pelo menos Conclusão.
+            if not re.search(r"\bConclus[aã]o\b", bloco, re.IGNORECASE):
+                continue
 
-            if len(ano) == 2:
-                ano = f"20{ano}"
+            conclusoes = list(re.finditer(r"^\s*Conclus[aã]o\s*$", bloco, re.IGNORECASE | re.MULTILINE))
+            trecho_decisivo = bloco[conclusoes[-1].start():] if conclusoes else bloco
 
-            conclusoes = list(re.finditer(
-                r"^\s*Conclus[aã]o\s*$",
-                bloco,
-                re.IGNORECASE | re.MULTILINE
+            # Corta assinaturas e evita que uma publicação posterior seja grudada ao parecer.
+            m_sala = re.search(r"^\s*Sala\s+das\s+Comiss", trecho_decisivo, re.IGNORECASE | re.MULTILINE)
+            if m_sala:
+                trecho_decisivo = trecho_decisivo[:m_sala.start()]
+
+            # Só conta quando a conclusão anuncia texto novo e esse texto aparece como título próprio.
+            # Não conta "apresentado pela Comissão de ...", que é substitutivo/emenda anterior.
+            anuncia_texto_novo = bool(re.search(
+                r"\b(?:a\s+seguir|ao\s+final|abaixo)\s+(?:redigido|redigida|apresentado|apresentada)|"
+                r"\b(?:apresentamos|redigimos)\b",
+                trecho_decisivo,
+                re.IGNORECASE
             ))
 
-            # Só considera texto efetivamente publicado como linha própria dentro do parecer.
-            # Isso evita classificar como emenda/substitutivo simples menções na conclusão.
-            trecho_decisivo = bloco[conclusoes[-1].start():] if conclusoes else bloco[-1800:]
+            tem_emenda_publicada = bool(emenda_titulo_pattern.search(trecho_decisivo))
+            tem_substitutivo_publicado = bool(substitutivo_titulo_pattern.search(trecho_decisivo))
 
-            tem_emenda = bool(emenda_pattern.search(trecho_decisivo))
+            if not anuncia_texto_novo and not (tem_emenda_publicada or tem_substitutivo_publicado):
+                continue
 
-            tem_substitutivo = bool(substitutivo_pattern.search(trecho_decisivo))
+            sigla = sigla_por_tipo(header.group(1))
+            numero = header.group(2)
+            ano = header.group(3)
 
-            if tem_emenda:
+            if tem_emenda_publicada:
                 registrar_tipo(sigla, numero, ano, "EMENDA")
 
-            if tem_substitutivo:
+            if tem_substitutivo_publicado:
                 registrar_tipo(sigla, numero, ano, "SUBSTITUTIVO")
 
         pareceres = []
