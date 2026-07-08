@@ -2507,8 +2507,8 @@ class LegislativeProcessor:
             sigla = "PLC" if "COMPLEMENTAR" in match.group(0).upper() else "PL"
             project_key = (sigla, numero, ano)
             if project_key not in found_projects:
-                found_projects[project_key] = set()
-            found_projects[project_key].add("EMENDA")
+                    found_projects[project_key] = set()
+                    found_projects[project_key].add("EMENDA")
 
             tipo_prop_regex_bloco = (
                   r"Projeto de Lei Complementar|"
