@@ -2285,7 +2285,7 @@ class LegislativeProcessor:
             )
 
             block = self.text[start_idx:end_idx].strip()
-            nums_in_block = re.findall(r"\d{2}\.?\d{3}/\d{4}", block)
+            nums_in_block = re.findall(rf"{NUM_REQ}/\d{{4}}", block)
 
             if not nums_in_block:
                 continue
