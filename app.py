@@ -2510,91 +2510,91 @@ class LegislativeProcessor:
                 found_projects[project_key] = set()
             found_projects[project_key].add("EMENDA")
 
-                tipo_prop_regex_bloco = (
-                    r"Projeto de Lei Complementar|"
-                    r"Projeto de Lei|"
-                    r"Projeto de Resolução|"
-                    r"Proposta de Emenda à Constituição|"
-                    r"Requerimento|"
-                    r"PLC|PL|PRE|PEC|RQN|RQC"
-                )
+            tipo_prop_regex_bloco = (
+                  r"Projeto de Lei Complementar|"
+                  r"Projeto de Lei|"
+                  r"Projeto de Resolução|"
+                  r"Proposta de Emenda à Constituição|"
+                  r"Requerimento|"
+                  r"PLC|PL|PRE|PEC|RQN|RQC"
+               )
 
-                numero_prop_regex_bloco = r"\d{1,5}(?:\s*\.\s*\d{1,3})?"
+            numero_prop_regex_bloco = r"\d{1,5}(?:\s*\.\s*\d{1,3})?"
 
-                parecer_header_pattern = re.compile(
-                    rf"^\s*PARECER\b[\s\S]{{0,260}}?"
-                    rf"\b({tipo_prop_regex_bloco})\s+"
-                    rf"(?:n[º°o]|N[º°O])?\s*"
-                    rf"({numero_prop_regex_bloco})\s*/\s*(\d{{2,4}})",
+            parecer_header_pattern = re.compile(
+                rf"^\s*PARECER\b[\s\S]{{0,260}}?"
+                rf"\b({tipo_prop_regex_bloco})\s+"
+                rf"(?:n[º°o]|N[º°O])?\s*"
+                rf"({numero_prop_regex_bloco})\s*/\s*(\d{{2,4}})",
+                re.IGNORECASE | re.MULTILINE
+            )
+
+            emenda_na_conclusao_pattern = re.compile(
+                r"\b(?:"
+                r"com\s+(?:a|as)\s+Emenda(?:s)?|"
+                r"pela\s+aprova[cç][aã]o\s+d(?:a|as)\s+Emenda(?:s)?|"
+                r"pela\s+rejei[cç][aã]o\s+d(?:a|as)\s+Emenda(?:s)?|"
+                r"apresentamos\s+(?:a\s+seguir\s+)?(?:a|as)\s+Emenda(?:s)?"
+                r")\b",
+                re.IGNORECASE
+            )
+
+            substitutivo_na_conclusao_pattern = re.compile(
+                r"\b(?:"
+                r"na\s+forma\s+do\s+Substitutivo|"
+                r"com\s+o\s+Substitutivo|"
+                r"pela\s+aprova[cç][aã]o\s+do\s+Substitutivo|"
+                r"apresentamos\s+(?:a\s+seguir\s+)?o\s+Substitutivo"
+                r")\b",
+                re.IGNORECASE
+            )
+
+            headers = list(parecer_header_pattern.finditer(clean_text))
+
+            for i, header in enumerate(headers):
+                bloco_inicio = header.start()
+                bloco_fim = headers[i + 1].start() if i + 1 < len(headers) else len(clean_text)
+                bloco = clean_text[bloco_inicio:bloco_fim]
+
+                sigla_raw = header.group(1)
+                sigla = SIGLA_MAP_PARECER.get(sigla_raw.lower(), sigla_raw.upper())
+                numero = normalizar_numero_proposicao(header.group(2))
+                ano = header.group(3)
+
+                if len(ano) == 2:
+                    ano = f"20{ano}"
+
+                project_key = (sigla, numero, ano)
+
+                conclusoes = list(re.finditer(
+                    r"^\s*Conclus[aã]o\s*$",
+                    bloco,
                     re.IGNORECASE | re.MULTILINE
+                ))
+
+                # A classificação deve sair da conclusão ou do texto de emenda/substitutivo
+                # imediatamente publicado dentro do mesmo parecer.
+                trecho_decisivo = bloco[conclusoes[-1].start():] if conclusoes else bloco[-1800:]
+
+                tem_emenda = (
+                    emenda_na_conclusao_pattern.search(trecho_decisivo)
+                    or emenda_pattern.search(trecho_decisivo)
                 )
 
-                emenda_na_conclusao_pattern = re.compile(
-                    r"\b(?:"
-                    r"com\s+(?:a|as)\s+Emenda(?:s)?|"
-                    r"pela\s+aprova[cç][aã]o\s+d(?:a|as)\s+Emenda(?:s)?|"
-                    r"pela\s+rejei[cç][aã]o\s+d(?:a|as)\s+Emenda(?:s)?|"
-                    r"apresentamos\s+(?:a\s+seguir\s+)?(?:a|as)\s+Emenda(?:s)?"
-                    r")\b",
-                    re.IGNORECASE
-                )
+                tem_substitutivo = (
+                    substitutivo_na_conclusao_pattern.search(trecho_decisivo)
+                    or substitutivo_pattern.search(trecho_decisivo)
+                 )
 
-                substitutivo_na_conclusao_pattern = re.compile(
-                    r"\b(?:"
-                    r"na\s+forma\s+do\s+Substitutivo|"
-                    r"com\s+o\s+Substitutivo|"
-                    r"pela\s+aprova[cç][aã]o\s+do\s+Substitutivo|"
-                    r"apresentamos\s+(?:a\s+seguir\s+)?o\s+Substitutivo"
-                    r")\b",
-                    re.IGNORECASE
-                )
+                if tem_emenda:
+                    if project_key not in found_projects:
+                    found_projects[project_key] = set()
+                    found_projects[project_key].add("EMENDA")
 
-                headers = list(parecer_header_pattern.finditer(clean_text))
-
-                for i, header in enumerate(headers):
-                    bloco_inicio = header.start()
-                    bloco_fim = headers[i + 1].start() if i + 1 < len(headers) else len(clean_text)
-                    bloco = clean_text[bloco_inicio:bloco_fim]
-
-                    sigla_raw = header.group(1)
-                    sigla = SIGLA_MAP_PARECER.get(sigla_raw.lower(), sigla_raw.upper())
-                    numero = normalizar_numero_proposicao(header.group(2))
-                    ano = header.group(3)
-
-                    if len(ano) == 2:
-                        ano = f"20{ano}"
-
-                    project_key = (sigla, numero, ano)
-
-                    conclusoes = list(re.finditer(
-                        r"^\s*Conclus[aã]o\s*$",
-                        bloco,
-                        re.IGNORECASE | re.MULTILINE
-                    ))
-
-                    # A classificação deve sair da conclusão ou do texto de emenda/substitutivo
-                    # imediatamente publicado dentro do mesmo parecer.
-                    trecho_decisivo = bloco[conclusoes[-1].start():] if conclusoes else bloco[-1800:]
-
-                    tem_emenda = (
-                        emenda_na_conclusao_pattern.search(trecho_decisivo)
-                        or emenda_pattern.search(trecho_decisivo)
-                    )
-
-                    tem_substitutivo = (
-                        substitutivo_na_conclusao_pattern.search(trecho_decisivo)
-                        or substitutivo_pattern.search(trecho_decisivo)
-                    )
-
-                    if tem_emenda:
-                        if project_key not in found_projects:
-                            found_projects[project_key] = set()
-                        found_projects[project_key].add("EMENDA")
-
-                    if tem_substitutivo:
-                        if project_key not in found_projects:
-                            found_projects[project_key] = set()
-                        found_projects[project_key].add("SUBSTITUTIVO")
+                if tem_substitutivo:
+                    if project_key not in found_projects:
+                        found_projects[project_key] = set()
+                    found_projects[project_key].add("SUBSTITUTIVO")
 
         emenda_projeto_lei_pattern = re.compile(
             r"EMENDAS AO PROJETO DE LEI Nº (\d{1,4}\.?\d{0,3})/(\d{4})",
