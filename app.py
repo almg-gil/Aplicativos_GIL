@@ -2480,6 +2480,7 @@ class LegislativeProcessor:
             r"^\s*EMENDA(?:\s+N[º°o])?\s+(\d+)\b",
             re.MULTILINE | re.IGNORECASE
         )
+
         substitutivo_pattern = re.compile(r"^(?:\s*)SUBSTITUTIVO Nº (\d+)\s*", re.MULTILINE)
         project_pattern = re.compile(
             r"Conclusão\s*([\s\S]*?)"
