@@ -2194,10 +2194,13 @@ class LegislativeProcessor:
             depois = texto[start_idx:start_idx + lookahead]
             return ")" in depois
 
-
-        rqn_pattern = re.compile(r"^(?:\s*)(Nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*d[ao]s?\b", re.MULTILINE)
+        NUM_REQ = r"(?:\d{1,2}\.?\d{3}|\d{1,5})"
+        rqn_pattern = re.compile(
+            rf"^(?:\s*)(Nº)\s+({NUM_REQ}/\d{{4}})\s*,\s*d[ao]s?\b",
+            re.MULTILINE
+            )
         rqc_old_pattern = re.compile(
-            r"^(?:\s*)(nº)\s+(\d{2}\.?\d{3}/\d{4})\s*,\s*(?:d[ao]s?\b|em\s+que\s+requer(?:em)?\b)",
+            rf"^(?:\s*)(nº)\s+({NUM_REQ}/\d{{4}})\s*,\s*(?:d[ao]s?\b|em\s+que\s+requer(?:em)?\b)",
             re.MULTILINE
         )
 
