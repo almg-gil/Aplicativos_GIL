@@ -2121,18 +2121,62 @@ class LegislativeProcessor:
             if numero_ano not in reqs_to_ignore:
                 requerimentos.append(["RQN", num_part, ano, "", "", "Recebido"])
 
+        NUM_REQ = r"(?:\d{1,2}\.?\d{3}|\d{1,5})"
+
+        fim_contexto_req_pattern = re.compile(
+            r"^\s*(?:"
+            r"Cumprida\s+a\s+finalidade|"
+            r"Sala\s+das\s+Comissões|"
+            r"Passa-se\s+[àa]|"
+            r"ATA\s+DA|"
+            r"ORDENS\s+DO\s+DIA|"
+            r"EDITAIS?\s+DE\s+CONVOCAÇÃO|"
+            r"TRAMITAÇÃO\s+DE\s+PROPOSIÇÕES|"
+            r"COMUNICAÇÕES|"
+            r"MANIFESTAÇÕES|"
+            r"REQUERIMENTOS\s+APROVADOS"
+            r")\b",
+            re.IGNORECASE | re.MULTILINE
+        )
+
+        def recortar_fim_contexto_requerimento(block: str) -> str:
+            m_fim = fim_contexto_req_pattern.search(block or "")
+            if m_fim:
+                return block[:m_fim.start()].strip()
+            return (block or "").strip()
+
+        def recortar_trecho_match_requerimento(texto: str, start_idx: int, limite: int = 1500) -> str:
+            trecho = texto[start_idx:start_idx + limite]
+            trecho = recortar_fim_contexto_requerimento(trecho)
+
+            # Se houver outro requerimento numerado logo depois, não deixa a classificação invadir o próximo.
+            m_proximo = re.search(
+                rf"\n\s*(?:Nº|nº)\s+{NUM_REQ}/\d{{4}}\s*,",
+                trecho,
+                flags=re.IGNORECASE
+            )
+
+            if m_proximo:
+                trecho = trecho[:m_proximo.start()]
+
+            return trecho.strip()
+        
         rqc_pattern_aprovado = re.compile(
             r"É\s+recebido\s+pela\s+presidência,\s+submetido\s+a\s+votação\s+e\s+aprovado\s+o\s+"
             r"Requerimento(?:s)?(?:\s+em\s+Comiss[aã]o)?(?:\s+n[º°o]|\s+N[º°O])?\s*"
-            r"(\d{1,5}(?:\.\d{0,3})?)/\s*(\d{4})",
+            rf"({NUM_REQ})/\s*(\d{{4}})",
             re.IGNORECASE
         )
+
         for match in rqc_pattern_aprovado.finditer(self.text):
             num_part = match.group(1).replace(".", "")
             ano = match.group(2)
             numero_ano = f"{num_part}/{ano}"
+
             if numero_ano not in reqs_to_ignore:
-                requerimentos.append(["RQC", num_part, ano, "", "", "Aprovado"])
+                trecho_req = recortar_trecho_match_requerimento(self.text, match.start())
+                classif = classify_req(trecho_req)
+                requerimentos.append(["RQC", num_part, ano, "", "", classif])
 
         rqc_recebido_apreciacao_pattern = re.compile(
             r"É\s+recebido\s+pela\s+presidência,\s+para\s+posterior\s+apreciação,\s+o\s+"
@@ -2284,7 +2328,7 @@ class LegislativeProcessor:
                 else len(self.text)
             )
 
-            block = self.text[start_idx:end_idx].strip()
+            block = recortar_fim_contexto_requerimento(self.text[start_idx:end_idx])
             nums_in_block = re.findall(rf"{NUM_REQ}/\d{{4}}", block)
 
             if not nums_in_block:
@@ -2345,7 +2389,6 @@ class LegislativeProcessor:
             "Manifestação de repúdio": 90,
             "Moção de aplauso": 90,
             "Manifestação de apoio": 90,
-            "Aprovado": 50,
             "Recebido para apreciação": 50,
             "Recebido": 50,
             "Prejudicado": 50,
