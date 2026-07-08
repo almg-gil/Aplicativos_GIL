@@ -2478,11 +2478,11 @@ class LegislativeProcessor:
         # Captura emendas explícitas que já trazem a proposição no próprio título.
         # Este padrão é seguro porque não depende do "último projeto anterior".
         emenda_completa_pattern = re.compile(
-            rf"\bEMENDA\s+N[º°O]?\s+\d+\s+AO\s+"
+            rf"^\s*EMENDA\s+N[º°O]?\s+\d+\s+AO\s+"
             rf"(?:SUBSTITUTIVO\s+N[º°O]?\s+\d+\s+AO\s+)?"
             rf"({tipo_prop_regex_bloco})\s+N[º°O]?\s*"
             rf"({numero_prop_regex_bloco})\s*/\s*(\d{{2,4}})",
-            re.IGNORECASE
+            re.IGNORECASE | re.MULTILINE
         )
 
         for match in emenda_completa_pattern.finditer(clean_text):
@@ -2528,26 +2528,6 @@ class LegislativeProcessor:
             re.IGNORECASE | re.MULTILINE
         )
 
-        emenda_na_conclusao_pattern = re.compile(
-            r"\b(?:"
-            r"com\s+(?:a|as)\s+Emenda(?:s)?|"
-            r"pela\s+aprova[cç][aã]o\s+d(?:a|as)\s+Emenda(?:s)?|"
-            r"pela\s+rejei[cç][aã]o\s+d(?:a|as)\s+Emenda(?:s)?|"
-            r"apresentamos\s+(?:a\s+seguir\s+)?(?:a|as)\s+Emenda(?:s)?"
-            r")\b",
-            re.IGNORECASE
-        )
-
-        substitutivo_na_conclusao_pattern = re.compile(
-            r"\b(?:"
-            r"na\s+forma\s+do\s+Substitutivo|"
-            r"com\s+o\s+Substitutivo|"
-            r"pela\s+aprova[cç][aã]o\s+do\s+Substitutivo|"
-            r"apresentamos\s+(?:a\s+seguir\s+)?o\s+Substitutivo"
-            r")\b",
-            re.IGNORECASE
-        )
-
         headers = list(parecer_header_pattern.finditer(clean_text))
 
         for i, header in enumerate(headers):
@@ -2568,19 +2548,13 @@ class LegislativeProcessor:
                 re.IGNORECASE | re.MULTILINE
             ))
 
-            # A classificação deve sair da conclusão ou de texto de emenda/substitutivo
-            # imediatamente publicado dentro do mesmo parecer, nunca do parecer seguinte.
+            # Só considera texto efetivamente publicado como linha própria dentro do parecer.
+            # Isso evita classificar como emenda/substitutivo simples menções na conclusão.
             trecho_decisivo = bloco[conclusoes[-1].start():] if conclusoes else bloco[-1800:]
 
-            tem_emenda = (
-                emenda_na_conclusao_pattern.search(trecho_decisivo)
-                or emenda_pattern.search(trecho_decisivo)
-            )
+            tem_emenda = bool(emenda_pattern.search(trecho_decisivo))
 
-            tem_substitutivo = (
-                substitutivo_na_conclusao_pattern.search(trecho_decisivo)
-                or substitutivo_pattern.search(trecho_decisivo)
-            )
+            tem_substitutivo = bool(substitutivo_pattern.search(trecho_decisivo))
 
             if tem_emenda:
                 registrar_tipo(sigla, numero, ano, "EMENDA")
