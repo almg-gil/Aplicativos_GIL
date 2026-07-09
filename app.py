@@ -1836,7 +1836,7 @@ class LegislativeProcessor:
         )
 
         # NOVO: fecho real da norma
-            # Corta leis no fecho do Palácio e DLBs no fecho da Mesa.
+        # Corta leis no fecho do Palácio e DLBs no fecho da Mesa.
             fecho_norma_regex = re.compile(
                 r"(?:"
                 r"Palácio\s+da\s+Inconfidência.*?Independência\s+do\s+Brasil\.?|"
@@ -1844,7 +1844,7 @@ class LegislativeProcessor:
                 r"\d{1,2}\s+de\s+[A-Za-zçÇãÃáÁéÉíÍóÓôÔúÚ]+(?:\s+de)?\s+\d{4}\.?"
                 r")",
                 re.IGNORECASE | re.DOTALL
-            )
+        )
 
         normas_encontradas = []
         for match in pattern.finditer(self.text):
