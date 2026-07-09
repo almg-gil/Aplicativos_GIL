@@ -1837,13 +1837,13 @@ class LegislativeProcessor:
 
         # NOVO: fecho real da norma
         # Corta leis no fecho do Palácio e DLBs no fecho da Mesa.
-            fecho_norma_regex = re.compile(
-                r"(?:"
-                r"Palácio\s+da\s+Inconfidência.*?Independência\s+do\s+Brasil\.?|"
-                r"Sala\s+de\s+Reuniões\s+da\s+Mesa\s+da\s+Assembleia(?:\s+Legislativa)?\s*,\s*"
-                r"\d{1,2}\s+de\s+[A-Za-zçÇãÃáÁéÉíÍóÓôÔúÚ]+(?:\s+de)?\s+\d{4}\.?"
-                r")",
-                re.IGNORECASE | re.DOTALL
+        fecho_norma_regex = re.compile(
+            r"(?:"
+            r"Palácio\s+da\s+Inconfidência.*?Independência\s+do\s+Brasil\.?|"
+            r"Sala\s+de\s+Reuniões\s+da\s+Mesa\s+da\s+Assembleia(?:\s+Legislativa)?\s*,\s*"
+            r"\d{1,2}\s+de\s+[A-Za-zçÇãÃáÁéÉíÍóÓôÔúÚ]+(?:\s+de)?\s+\d{4}\.?"
+            r")",
+            re.IGNORECASE | re.DOTALL
         )
 
         normas_encontradas = []
