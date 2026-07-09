@@ -2486,7 +2486,7 @@ class LegislativeProcessor:
         emenda_completa_pattern = re.compile(
             rf"^\s*EMENDA\s+N[º°O]?\s+\d+\s+AO\s+"
             rf"(?:SUBSTITUTIVO\s+N[º°O]?\s+\d+\s+AO\s+)?"
-            rf"({tipo_prop_regex})\s+N[º°O]?\s*"
+            rf"({tipo_prop_regex})\s+(?:N[º°O]?\s*)?"
             rf"({numero_prop_regex})\s*/\s*(\d{{2,4}})\b",
             re.IGNORECASE | re.MULTILINE
         )
@@ -2501,7 +2501,7 @@ class LegislativeProcessor:
 
         # 2) Título coletivo "EMENDAS AO PROJETO..." seguido de emenda numerada.
         emendas_ao_projeto_pattern = re.compile(
-            rf"^\s*EMENDAS\s+AO\s+({tipo_prop_regex})\s+N[º°O]?\s*"
+            rf"^\s*EMENDAS\s+AO\s+({tipo_prop_regex})\s+(?:N[º°O]?\s*)?"
             rf"({numero_prop_regex})\s*/\s*(\d{{2,4}})\b",
             re.IGNORECASE | re.MULTILINE
         )
