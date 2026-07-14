@@ -2463,12 +2463,14 @@ class LegislativeProcessor:
             return SIGLA_MAP_PARECER.get(tipo_raw.lower(), tipo_raw.upper())
 
         tipo_prop_regex = (
+            r"Requerimento|"
             r"Projeto de Lei Complementar|"
             r"Projeto de Lei|"
             r"Projeto de Resolução|"
             r"Proposta de Emenda à Constituição|"
             r"PLC|PL|PRE|PEC"
         )
+
         numero_prop_regex = r"\d{1,5}(?:\s*\.\s*\d{1,3})?"
 
         texto = self.text
@@ -2526,11 +2528,12 @@ class LegislativeProcessor:
 
         # 3) Pareceres: associa texto próprio de emenda/substitutivo ao cabeçalho do próprio parecer.
         parecer_header_pattern = re.compile(
-            rf"^\s*PARECER\b[\s\S]{{0,360}}?"
+            rf"^\s*PARECER\b"
+            rf"(?i:[\s\S]{{0,360}}?"
             rf"\b({tipo_prop_regex})\s+"
             rf"(?:n[º°o]|N[º°O])?\s*"
-            rf"({numero_prop_regex})\s*/\s*(\d{{2,4}})\b",
-            re.IGNORECASE | re.MULTILINE
+            rf"({numero_prop_regex})\s*/\s*(\d{{2,4}})\b)",
+            re.MULTILINE
         )
 
         emenda_titulo_pattern = re.compile(
