@@ -2537,11 +2537,11 @@ class LegislativeProcessor:
         )
 
         emenda_titulo_pattern = re.compile(
-            r"^\s*EMENDA\s+N[º°O]?\s+\d+\s*$",
+            r"^\s*EMENDA\s+N[º°O]?\s*\d+\s*$",
             re.IGNORECASE | re.MULTILINE
         )
         substitutivo_titulo_pattern = re.compile(
-            r"^\s*SUBSTITUTIVO\s+N[º°O]?\s+\d+\s*$",
+            r"^\s*SUBSTITUTIVO\s+N[º°O]?\s*\d+\s*$",
             re.IGNORECASE | re.MULTILINE
         )
 
