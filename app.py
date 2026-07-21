@@ -2557,11 +2557,33 @@ class LegislativeProcessor:
             if not re.search(r"\bConclus[aã]o\b", bloco, re.IGNORECASE):
                 continue
 
-            conclusoes = list(re.finditer(r"^\s*Conclus[aã]o\s*$", bloco, re.IGNORECASE | re.MULTILINE))
-            trecho_decisivo = bloco[conclusoes[-1].start():] if conclusoes else bloco
+            conclusoes = list(
+                re.finditer(
+                    r"^\s*Conclus[aã]o\s*$",
+                    bloco,
+                    re.IGNORECASE | re.MULTILINE
+                )
+            )
 
-            # Corta assinaturas e evita que uma publicação posterior seja grudada ao parecer.
-            m_sala = re.search(r"^\s*Sala\s+das\s+Comiss", trecho_decisivo, re.IGNORECASE | re.MULTILINE)
+            if not conclusoes:
+                continue
+
+            # Usa a primeira conclusão após o cabeçalho do parecer atual.
+            # Isso evita selecionar conclusões pertencentes a relatórios ou
+            # outros documentos que tenham sido incorporados ao mesmo bloco.
+            trecho_decisivo = bloco[conclusoes[0].start():]
+
+            # Corta assinaturas e evita que uma publicação posterior seja
+            # grudada ao parecer. Abrange tanto pareceres de comissão quanto
+            # pareceres da Mesa da Assembleia.
+            m_sala = re.search(
+                r"^\s*Sala\s+(?:"
+                r"das\s+Comiss(?:ões|oes)|"
+                r"de\s+Reuniões\s+da\s+Mesa\s+da\s+Assembleia"
+                r")\b",
+                trecho_decisivo,
+                re.IGNORECASE | re.MULTILINE
+            )
             if m_sala:
                 trecho_decisivo = trecho_decisivo[:m_sala.start()]
 
