@@ -1025,6 +1025,12 @@ def montar_urls(d):
         ),
         "legislativo": f"https://diariolegislativo.almg.gov.br/{d['yyyy']}/L{d['yyyymmdd']}.pdf",
         "administrativo": "",
+         ),
+        "administrativo": (
+            "https://intra.almg.gov.br/export/sites/default/"
+            "acontece/diario-administrativo/arquivos/"
+            f"{d['yyyy']}/{d['mm']}/L{d['yyyymmdd']}.pdf"
+        ),
     }
 
 
