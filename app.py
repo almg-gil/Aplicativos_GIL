@@ -1023,9 +1023,9 @@ def montar_urls(d):
             "https://www.jornalminasgerais.mg.gov.br/edicao-do-dia"
             f"?dados=%7B%22dataPublicacaoSelecionada%22:%22{d['iso_exec']}%22%7D"
         ),
-        "legislativo": f"https://diariolegislativo.almg.gov.br/{d['yyyy']}/L{d['yyyymmdd']}.pdf",
-        "administrativo": "",
+        "legislativo": (f"https://diariolegislativo.almg.gov.br/{d['yyyy']}/L{d['yyyymmdd']}.pdf",
          ),
+        
         "administrativo": (
             "https://intra.almg.gov.br/export/sites/default/"
             "acontece/diario-administrativo/arquivos/"
