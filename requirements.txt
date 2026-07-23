@@ -13,6 +13,6 @@ transformers>=4.34.0
 nltk>=3.8.1
 gspread
 playwright
-google-api-python-client
-google-auth
-google-auth-httplib2
+google-api-python-client>=2.100.0
+google-auth>=2.23.0
+google-auth-httplib2>=0.2.0
