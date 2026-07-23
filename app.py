@@ -23,6 +23,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from googleapiclient.http import MediaIoBaseDownload
 from zoneinfo import ZoneInfo
 import unicodedata
 
@@ -31,6 +32,7 @@ import unicodedata
 # =========================
 PLANILHA_URL = "https://docs.google.com/spreadsheets/d/1-am5qb_SV853v5omolRM46G8-IQH5ABJKXtoFh_WUvQ"
 ABA_MODELO = "MODELO"
+PASTA_DRIVE_DIARIO_ADMINISTRATIVO = "1HVaXREfbVOiv6muigAzfTtKpu6AuXbg0"
 
 GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -236,6 +238,17 @@ def conectar_calendar():
 
     return build(
         "calendar",
+        "v3",
+        credentials=creds,
+        cache_discovery=False
+    )
+
+
+@st.cache_resource
+def conectar_drive_service():
+    creds = obter_google_credentials()
+    return build(
+        "drive",
         "v3",
         credentials=creds,
         cache_discovery=False
@@ -1011,10 +1024,7 @@ def montar_urls(d):
             f"?dados=%7B%22dataPublicacaoSelecionada%22:%22{d['iso_exec']}%22%7D"
         ),
         "legislativo": f"https://diariolegislativo.almg.gov.br/{d['yyyy']}/L{d['yyyymmdd']}.pdf",
-        "administrativo": (
-            "https://intra.almg.gov.br/export/sites/default/acontece/"
-            f"diario-administrativo/arquivos/{d['yyyy']}/{d['mm']}/L{d['yyyymmdd']}.pdf"
-        ),
+        "administrativo": "",
     }
 
 
@@ -1025,6 +1035,59 @@ def baixar(url):
     r = requests.get(url, timeout=60)
     r.raise_for_status()
     return r.content
+
+
+def nome_arquivo_diario_administrativo(data_ref: date) -> str:
+    return f"DA_{data_ref.strftime('%Y%m%d')}(signed).pdf"
+
+
+def baixar_pdf_administrativo_drive(data_ref: date) -> tuple[bytes, dict]:
+    service = conectar_drive_service()
+    nome_arquivo = nome_arquivo_diario_administrativo(data_ref)
+    nome_query = nome_arquivo.replace("\\", "\\\\").replace("'", "\\'")
+
+    query = (
+        f"'{PASTA_DRIVE_DIARIO_ADMINISTRATIVO}' in parents "
+        f"and name = '{nome_query}' "
+        "and mimeType = 'application/pdf' "
+        "and trashed = false"
+    )
+
+    resposta = service.files().list(
+        q=query,
+        spaces="drive",
+        fields="files(id,name,mimeType,size,createdTime,modifiedTime)",
+        pageSize=10,
+        supportsAllDrives=True,
+        includeItemsFromAllDrives=True,
+    ).execute()
+
+    arquivos = resposta.get("files", [])
+    if not arquivos:
+        raise FileNotFoundError(
+            f"O arquivo '{nome_arquivo}' não foi encontrado na pasta do Diário Administrativo."
+        )
+
+    arquivo = arquivos[0]
+    request = service.files().get_media(
+        fileId=arquivo["id"],
+        supportsAllDrives=True
+    )
+
+    buffer = io.BytesIO()
+    downloader = MediaIoBaseDownload(buffer, request, chunksize=1024 * 1024)
+
+    concluido = False
+    while not concluido:
+        _, concluido = downloader.next_chunk()
+
+    pdf_bytes = buffer.getvalue()
+    if not pdf_bytes.startswith(b"%PDF-"):
+        raise ValueError(
+            f"O arquivo '{arquivo['name']}' foi baixado, mas não contém um PDF válido."
+        )
+
+    return pdf_bytes, arquivo
 
 
 # =========================
@@ -3916,7 +3979,11 @@ def run_app():
 
             # ================= ADMINISTRATIVO =================
             try:
-                pdf_adm = baixar(urls["administrativo"])
+                pdf_adm, arquivo_adm = baixar_pdf_administrativo_drive(data_calendario)
+                urls["administrativo"] = (
+                    f"https://drive.google.com/file/d/{arquivo_adm['id']}/view"
+                )
+
                 adm_proc = AdministrativeProcessor(pdf_adm)
                 df_adm = adm_proc.process_pdf()
 
