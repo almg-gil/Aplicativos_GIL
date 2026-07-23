@@ -3987,9 +3987,6 @@ def run_app():
             # ================= ADMINISTRATIVO =================
             try:
                 pdf_adm, arquivo_adm = baixar_pdf_administrativo_drive(data_calendario)
-                urls["administrativo"] = (
-                    f"https://drive.google.com/file/d/{arquivo_adm['id']}/view"
-                )
 
                 adm_proc = AdministrativeProcessor(pdf_adm)
                 df_adm = adm_proc.process_pdf()
