@@ -14,3 +14,5 @@ nltk>=3.8.1
 gspread
 playwright
 google-api-python-client
+google-auth
+google-auth-httplib2
