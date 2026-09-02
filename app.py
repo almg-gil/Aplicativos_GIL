@@ -524,6 +524,94 @@ class DistribuidorRoundRobin:
         return escolhido
 
 
+class DistribuidorCargaGlobal:
+    def __init__(self):
+        # Execução e revisão possuem cargas independentes.
+        self.cargas_execucao = {}
+        self.cargas_revisao = {}
+
+        # Em caso de empate, prioriza quem foi escolhido há mais tempo.
+        self.ultima_execucao = {}
+        self.ultima_revisao = {}
+        self._sequencia_execucao = 0
+        self._sequencia_revisao = 0
+
+    def _escolher(
+        self,
+        candidatos: list[str],
+        cargas: dict[str, int],
+        ultimas_atribuicoes: dict[str, int],
+        tipo: str,
+        excluir: set[str] | None = None,
+    ) -> str:
+        excluir = {nome_planilha(x) for x in (excluir or set())}
+
+        candidatos_validos = []
+        vistos = set()
+
+        for candidato in candidatos:
+            pessoa = nome_planilha(candidato)
+            if not pessoa or pessoa in vistos or pessoa in excluir:
+                continue
+            vistos.add(pessoa)
+            candidatos_validos.append(pessoa)
+
+        if not candidatos_validos:
+            return ""
+
+        for pessoa in candidatos_validos:
+            cargas.setdefault(pessoa, 0)
+            ultimas_atribuicoes.setdefault(pessoa, -1)
+
+        menor_carga = min(cargas[pessoa] for pessoa in candidatos_validos)
+        empatados = [
+            pessoa
+            for pessoa in candidatos_validos
+            if cargas[pessoa] == menor_carga
+        ]
+
+        escolhido = min(
+            empatados,
+            key=lambda pessoa: (
+                ultimas_atribuicoes[pessoa],
+                candidatos_validos.index(pessoa),
+            ),
+        )
+
+        cargas[escolhido] += 1
+
+        if tipo == "execucao":
+            ultimas_atribuicoes[escolhido] = self._sequencia_execucao
+            self._sequencia_execucao += 1
+        else:
+            ultimas_atribuicoes[escolhido] = self._sequencia_revisao
+            self._sequencia_revisao += 1
+
+        return escolhido
+
+    def proximo_executor(self, candidatos: list[str]) -> str:
+        return self._escolher(
+            candidatos,
+            self.cargas_execucao,
+            self.ultima_execucao,
+            "execucao",
+        )
+
+    def proximo_revisor(
+        self,
+        candidatos: list[str],
+        executor: str = "",
+    ) -> str:
+        excluir = {executor} if executor else set()
+        return self._escolher(
+            candidatos,
+            self.cargas_revisao,
+            self.ultima_revisao,
+            "revisao",
+            excluir=excluir,
+        )
+
+
 def linha_continuacao_norma(r: pd.Series) -> bool:
     campos_base = [
         r.get("Página", ""),
@@ -588,37 +676,45 @@ def distribuir_tarefas_extraidas_em_blocos(
     df_pareceres: pd.DataFrame,
     indisponiveis: set[str] | None = None,
 ):
+    distribuidor_global = DistribuidorCargaGlobal()
+
     df_exec = atribuir_responsaveis_normas(
         df_exec,
         indisponiveis=indisponiveis,
         replicar_em_linhas_continuacao=True,
+        distribuidor_global=distribuidor_global,
     )
 
     df_adm = atribuir_responsaveis_normas(
         df_adm,
         indisponiveis=indisponiveis,
         replicar_em_linhas_continuacao=True,
+        distribuidor_global=distribuidor_global,
     )
 
     df_leg_normas = atribuir_responsaveis_normas(
         df_leg_normas,
         indisponiveis=indisponiveis,
         replicar_em_linhas_continuacao=True,
+        distribuidor_global=distribuidor_global,
     )
 
     df_props = atribuir_responsaveis_proposicoes(
         df_props,
         indisponiveis=indisponiveis,
+        distribuidor_global=distribuidor_global,
     )
 
     df_reqs = atribuir_responsaveis_requerimentos(
         df_reqs,
         indisponiveis=indisponiveis,
+        distribuidor_global=distribuidor_global,
     )
 
     df_pareceres = atribuir_responsaveis_pareceres(
         df_pareceres,
         indisponiveis=indisponiveis,
+        distribuidor_global=distribuidor_global,
     )
 
     return df_exec, df_adm, df_leg_normas, df_props, df_reqs, df_pareceres
@@ -1534,67 +1630,41 @@ def atribuir_responsaveis_normas(
     df: pd.DataFrame,
     indisponiveis: set[str] | None = None,
     replicar_em_linhas_continuacao: bool = True,
+    distribuidor_global: DistribuidorCargaGlobal | None = None,
 ) -> pd.DataFrame:
     df = inicializar_df_responsaveis(df)
     if df.empty:
         return df
 
+    distribuidor_global = distribuidor_global or DistribuidorCargaGlobal()
+
     cand_exec_dne = candidatos_para_tarefa("implantacao_normas_dne", indisponiveis)
     cand_exec_nao_dne = candidatos_para_tarefa("implantacao_normas_nao_dne", indisponiveis)
     cand_rev = candidatos_para_tarefa("revisao_normas", indisponiveis)
-
-    mascara_cont = []
-    pos_principais = []
-    pos_dne = []
-    pos_nao_dne = []
-
-    for pos, (_, r) in enumerate(df.iterrows()):
-        cont = replicar_em_linhas_continuacao and linha_continuacao_norma(r)
-        mascara_cont.append(cont)
-
-        if cont:
-            continue
-
-        pos_principais.append(pos)
-
-        if eh_norma_dne(r):
-            pos_dne.append(pos)
-        else:
-            pos_nao_dne.append(pos)
-
-    mapa_exec_dne = distribuir_para_posicoes(len(df), pos_dne, cand_exec_dne)
-    mapa_exec_nao_dne = distribuir_para_posicoes(len(df), pos_nao_dne, cand_exec_nao_dne)
-
-    # 1) monta primeiro a execução das normas principais
-    execucoes_principais = []
-    for pos in pos_principais:
-        executor = mapa_exec_dne.get(pos, mapa_exec_nao_dne.get(pos, ""))
-        execucoes_principais.append(nome_planilha(executor))
-
-    # 2) distribui revisores impedindo executor == revisor
-    revisoes_principais = distribuir_revisores_sem_mesma_pessoa(
-        execucoes_principais,
-        cand_rev
-    )
-
-    mapa_rev = {
-        pos: revisor
-        for pos, revisor in zip(pos_principais, revisoes_principais)
-    }
 
     execucoes = []
     revisoes = []
     ultimo_exec = ""
     ultimo_rev = ""
 
-    for pos, cont in enumerate(mascara_cont):
+    for _, r in df.iterrows():
+        cont = replicar_em_linhas_continuacao and linha_continuacao_norma(r)
+
         if cont:
             execucoes.append(ultimo_exec)
             revisoes.append(ultimo_rev)
             continue
 
-        ultimo_exec = mapa_exec_dne.get(pos, mapa_exec_nao_dne.get(pos, ""))
-        ultimo_rev = mapa_rev.get(pos, "")
+        if eh_norma_dne(r):
+            candidatos_exec = cand_exec_dne
+        else:
+            candidatos_exec = cand_exec_nao_dne
+
+        ultimo_exec = distribuidor_global.proximo_executor(candidatos_exec)
+        ultimo_rev = distribuidor_global.proximo_revisor(
+            cand_rev,
+            executor=ultimo_exec,
+        )
 
         execucoes.append(ultimo_exec)
         revisoes.append(ultimo_rev)
@@ -1607,32 +1677,35 @@ def atribuir_responsaveis_normas(
 def atribuir_responsaveis_proposicoes(
     df: pd.DataFrame,
     indisponiveis: set[str] | None = None,
+    distribuidor_global: DistribuidorCargaGlobal | None = None,
 ) -> pd.DataFrame:
     df = inicializar_df_responsaveis(df)
     if df.empty:
         return df
 
+    distribuidor_global = distribuidor_global or DistribuidorCargaGlobal()
+
     cand_exec_up = candidatos_para_tarefa("execucao_proposicoes_up", indisponiveis)
     cand_exec_nao_up = candidatos_para_tarefa("execucao_proposicoes_nao_up", indisponiveis)
     cand_rev = candidatos_para_tarefa("revisao_proposicoes", indisponiveis)
 
-    pos_up = []
-    pos_nao_up = []
-
-    for pos, (_, r) in enumerate(df.iterrows()):
-        if eh_proposicao_up(r):
-            pos_up.append(pos)
-        else:
-            pos_nao_up.append(pos)
-
-    mapa_exec_up = distribuir_para_posicoes(len(df), pos_up, cand_exec_up)
-    mapa_exec_nao_up = distribuir_para_posicoes(len(df), pos_nao_up, cand_exec_nao_up)
-
     execucoes = []
-    for pos in range(len(df)):
-        execucoes.append(mapa_exec_up.get(pos, mapa_exec_nao_up.get(pos, "")))
+    revisoes = []
 
-    revisoes = distribuir_revisores_sem_mesma_pessoa(execucoes, cand_rev)
+    for _, r in df.iterrows():
+        if eh_proposicao_up(r):
+            candidatos_exec = cand_exec_up
+        else:
+            candidatos_exec = cand_exec_nao_up
+
+        executor = distribuidor_global.proximo_executor(candidatos_exec)
+        revisor = distribuidor_global.proximo_revisor(
+            cand_rev,
+            executor=executor,
+        )
+
+        execucoes.append(executor)
+        revisoes.append(revisor)
 
     df["ResponsavelExecucao"] = execucoes
     df["ResponsavelRevisao"] = revisoes
@@ -1642,49 +1715,38 @@ def atribuir_responsaveis_proposicoes(
 def atribuir_responsaveis_requerimentos(
     df: pd.DataFrame,
     indisponiveis: set[str] | None = None,
+    distribuidor_global: DistribuidorCargaGlobal | None = None,
 ) -> pd.DataFrame:
     df = inicializar_df_responsaveis(df)
     if df.empty:
         return df
 
+    distribuidor_global = distribuidor_global or DistribuidorCargaGlobal()
+
     cand_exec = candidatos_para_tarefa("execucao_requerimentos", indisponiveis)
     cand_rev = candidatos_para_tarefa("revisao_requerimentos", indisponiveis)
 
-    execucoes = [""] * len(df)
-    revisoes = [""] * len(df)
+    execucoes = []
+    revisoes = []
 
-    pos_sem_tratamento = []
-    pos_normais = []
-
-    for pos, (_, r) in enumerate(df.iterrows()):
+    for _, r in df.iterrows():
         if requerimento_sem_tratamento(r):
-            pos_sem_tratamento.append(pos)
-        else:
-            pos_normais.append(pos)
+            execucoes.append("-")
+            revisoes.append("-")
+            continue
 
-    for pos in pos_sem_tratamento:
-        execucoes[pos] = "-"
-        revisoes[pos] = "-"
-
-    mapa_exec = distribuir_para_posicoes(len(df), pos_normais, cand_exec)
-
-    posicoes_com_revisao = []
-    execucoes_com_revisao = []
-
-    for pos in pos_normais:
-        executor = nome_planilha(mapa_exec.get(pos, ""))
-        execucoes[pos] = executor
+        executor = distribuidor_global.proximo_executor(cand_exec)
 
         if pessoa_pertence_ao_grupo(executor, "BIBLIOTECARIO"):
-            revisoes[pos] = "-"
+            revisor = "-"
         else:
-            posicoes_com_revisao.append(pos)
-            execucoes_com_revisao.append(executor)
+            revisor = distribuidor_global.proximo_revisor(
+                cand_rev,
+                executor=executor,
+            )
 
-    revisores_distribuidos = distribuir_revisores_sem_mesma_pessoa(execucoes_com_revisao, cand_rev)
-
-    for pos, revisor in zip(posicoes_com_revisao, revisores_distribuidos):
-        revisoes[pos] = revisor
+        execucoes.append(executor)
+        revisoes.append(revisor)
 
     df["ResponsavelExecucao"] = execucoes
     df["ResponsavelRevisao"] = revisoes
@@ -1694,16 +1756,29 @@ def atribuir_responsaveis_requerimentos(
 def atribuir_responsaveis_pareceres(
     df: pd.DataFrame,
     indisponiveis: set[str] | None = None,
+    distribuidor_global: DistribuidorCargaGlobal | None = None,
 ) -> pd.DataFrame:
     df = inicializar_df_responsaveis(df)
     if df.empty:
         return df
 
+    distribuidor_global = distribuidor_global or DistribuidorCargaGlobal()
+
     cand_exec = candidatos_para_tarefa("execucao_pareceres", indisponiveis)
     cand_rev = candidatos_para_tarefa("revisao_pareceres", indisponiveis)
 
-    execucoes = distribuir_em_blocos(len(df), cand_exec)
-    revisoes = distribuir_revisores_sem_mesma_pessoa(execucoes, cand_rev)
+    execucoes = []
+    revisoes = []
+
+    for _ in range(len(df)):
+        executor = distribuidor_global.proximo_executor(cand_exec)
+        revisor = distribuidor_global.proximo_revisor(
+            cand_rev,
+            executor=executor,
+        )
+
+        execucoes.append(executor)
+        revisoes.append(revisor)
 
     df["ResponsavelExecucao"] = execucoes
     df["ResponsavelRevisao"] = revisoes
