@@ -526,22 +526,16 @@ class DistribuidorRoundRobin:
 
 class DistribuidorCargaGlobal:
     def __init__(self):
-        # Execução e revisão possuem cargas independentes.
-        self.cargas_execucao = {}
-        self.cargas_revisao = {}
+        # Execuções e revisões entram na mesma carga total do dia.
+        self.cargas = {}
 
-        # Em caso de empate, prioriza quem foi escolhido há mais tempo.
-        self.ultima_execucao = {}
-        self.ultima_revisao = {}
-        self._sequencia_execucao = 0
-        self._sequencia_revisao = 0
+        # Em caso de empate, prioriza quem recebeu uma tarefa há mais tempo.
+        self.ultima_atribuicao = {}
+        self._sequencia = 0
 
     def _escolher(
         self,
         candidatos: list[str],
-        cargas: dict[str, int],
-        ultimas_atribuicoes: dict[str, int],
-        tipo: str,
         excluir: set[str] | None = None,
     ) -> str:
         excluir = {nome_planilha(x) for x in (excluir or set())}
@@ -560,42 +554,32 @@ class DistribuidorCargaGlobal:
             return ""
 
         for pessoa in candidatos_validos:
-            cargas.setdefault(pessoa, 0)
-            ultimas_atribuicoes.setdefault(pessoa, -1)
+            self.cargas.setdefault(pessoa, 0)
+            self.ultima_atribuicao.setdefault(pessoa, -1)
 
-        menor_carga = min(cargas[pessoa] for pessoa in candidatos_validos)
+        menor_carga = min(self.cargas[pessoa] for pessoa in candidatos_validos)
         empatados = [
             pessoa
             for pessoa in candidatos_validos
-            if cargas[pessoa] == menor_carga
+            if self.cargas[pessoa] == menor_carga
         ]
 
         escolhido = min(
             empatados,
             key=lambda pessoa: (
-                ultimas_atribuicoes[pessoa],
+                self.ultima_atribuicao[pessoa],
                 candidatos_validos.index(pessoa),
             ),
         )
 
-        cargas[escolhido] += 1
-
-        if tipo == "execucao":
-            ultimas_atribuicoes[escolhido] = self._sequencia_execucao
-            self._sequencia_execucao += 1
-        else:
-            ultimas_atribuicoes[escolhido] = self._sequencia_revisao
-            self._sequencia_revisao += 1
+        self.cargas[escolhido] += 1
+        self.ultima_atribuicao[escolhido] = self._sequencia
+        self._sequencia += 1
 
         return escolhido
 
     def proximo_executor(self, candidatos: list[str]) -> str:
-        return self._escolher(
-            candidatos,
-            self.cargas_execucao,
-            self.ultima_execucao,
-            "execucao",
-        )
+        return self._escolher(candidatos)
 
     def proximo_revisor(
         self,
@@ -605,9 +589,6 @@ class DistribuidorCargaGlobal:
         excluir = {executor} if executor else set()
         return self._escolher(
             candidatos,
-            self.cargas_revisao,
-            self.ultima_revisao,
-            "revisao",
             excluir=excluir,
         )
 
