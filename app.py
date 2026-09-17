@@ -648,6 +648,144 @@ def distribuir_responsaveis_dataframe(
     return df
 
 
+def compactar_indices_em_blocos(
+    df: pd.DataFrame,
+    indices: list,
+) -> pd.DataFrame:
+    """
+    Mantém exatamente as quantidades e as duplas executor/revisor já
+    calculadas, mas reorganiza as atribuições em blocos contínuos.
+    """
+    if df is None or df.empty or not indices:
+        return df
+
+    ordem_executores = []
+    revisores_por_executor = {}
+
+    for idx in indices:
+        executor = nome_planilha(df.at[idx, "ResponsavelExecucao"])
+        revisor = nome_planilha(df.at[idx, "ResponsavelRevisao"])
+
+        if executor not in revisores_por_executor:
+            ordem_executores.append(executor)
+            revisores_por_executor[executor] = []
+
+        revisores_por_executor[executor].append(revisor)
+
+    novas_atribuicoes = []
+
+    for executor in ordem_executores:
+        revisores = revisores_por_executor[executor]
+        ordem_revisores = []
+        contagem_revisores = {}
+
+        for revisor in revisores:
+            if revisor not in contagem_revisores:
+                ordem_revisores.append(revisor)
+                contagem_revisores[revisor] = 0
+            contagem_revisores[revisor] += 1
+
+        for revisor in ordem_revisores:
+            qtd = contagem_revisores[revisor]
+            novas_atribuicoes.extend([(executor, revisor)] * qtd)
+
+    for idx, (executor, revisor) in zip(indices, novas_atribuicoes):
+        df.at[idx, "ResponsavelExecucao"] = executor
+        df.at[idx, "ResponsavelRevisao"] = revisor
+
+    return df
+
+
+def compactar_normas_em_blocos(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compacta separadamente normas DNE e não DNE e mantém linhas de
+    continuação com os mesmos responsáveis da norma principal.
+    """
+    if df is None or df.empty:
+        return df
+
+    df = df.copy()
+
+    indices_dne = []
+    indices_nao_dne = []
+
+    for idx, r in df.iterrows():
+        if linha_continuacao_norma(r):
+            continue
+
+        if eh_norma_dne(r):
+            indices_dne.append(idx)
+        else:
+            indices_nao_dne.append(idx)
+
+    df = compactar_indices_em_blocos(df, indices_dne)
+    df = compactar_indices_em_blocos(df, indices_nao_dne)
+
+    ultimo_executor = ""
+    ultimo_revisor = ""
+
+    for idx, r in df.iterrows():
+        if linha_continuacao_norma(r):
+            df.at[idx, "ResponsavelExecucao"] = ultimo_executor
+            df.at[idx, "ResponsavelRevisao"] = ultimo_revisor
+        else:
+            ultimo_executor = df.at[idx, "ResponsavelExecucao"]
+            ultimo_revisor = df.at[idx, "ResponsavelRevisao"]
+
+    return df
+
+
+def compactar_proposicoes_em_blocos(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compacta separadamente proposições UP e não UP.
+    """
+    if df is None or df.empty:
+        return df
+
+    df = df.copy()
+
+    indices_up = []
+    indices_nao_up = []
+
+    for idx, r in df.iterrows():
+        if eh_proposicao_up(r):
+            indices_up.append(idx)
+        else:
+            indices_nao_up.append(idx)
+
+    df = compactar_indices_em_blocos(df, indices_up)
+    df = compactar_indices_em_blocos(df, indices_nao_up)
+
+    return df
+
+
+def compactar_requerimentos_em_blocos(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compacta somente requerimentos que recebem tratamento. Os que não
+    recebem tratamento permanecem com '-' nas posições originais.
+    """
+    if df is None or df.empty:
+        return df
+
+    df = df.copy()
+
+    indices_tratamento = [
+        idx
+        for idx, r in df.iterrows()
+        if not requerimento_sem_tratamento(r)
+    ]
+
+    return compactar_indices_em_blocos(df, indices_tratamento)
+
+
+def compactar_pareceres_em_blocos(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+
+    df = df.copy()
+    return compactar_indices_em_blocos(df, list(df.index))
+
+
 def distribuir_tarefas_extraidas_em_blocos(
     df_exec: pd.DataFrame,
     df_adm: pd.DataFrame,
@@ -697,6 +835,15 @@ def distribuir_tarefas_extraidas_em_blocos(
         indisponiveis=indisponiveis,
         distribuidor_global=distribuidor_global,
     )
+
+    # Mantém o balanceamento calculado acima e apenas reorganiza as
+    # atribuições em blocos contínuos, tanto na execução quanto na revisão.
+    df_exec = compactar_normas_em_blocos(df_exec)
+    df_adm = compactar_normas_em_blocos(df_adm)
+    df_leg_normas = compactar_normas_em_blocos(df_leg_normas)
+    df_props = compactar_proposicoes_em_blocos(df_props)
+    df_reqs = compactar_requerimentos_em_blocos(df_reqs)
+    df_pareceres = compactar_pareceres_em_blocos(df_pareceres)
 
     return df_exec, df_adm, df_leg_normas, df_props, df_reqs, df_pareceres
 
