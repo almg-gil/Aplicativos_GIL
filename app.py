@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 import sys
+import hmac
 import time
 import streamlit as st
 import re
@@ -4005,6 +4006,18 @@ Regras estritas:
 def run_app():
     st.set_page_config(page_title="Assistente Virtual da GIL")
 
+    # Somente desative esta barreira depois de restringir o acesso no Community Cloud.
+    modo_acesso = str(st.secrets.get("AUTH_MODE", "senha_temporaria")).strip().lower()
+    if modo_acesso != "streamlit_private":
+        senha = str(st.secrets.get("SENHA_TESTE_STREAMLIT", ""))
+        if not senha:
+            st.error("Configure SENHA_TESTE_STREAMLIT nos Secrets antes de usar o aplicativo.")
+            st.stop()
+        chave = st.text_input("Senha temporária do aplicativo", type="password", key="gil_senha_temporaria")
+        if not chave or not hmac.compare_digest(chave.encode("utf-8"), senha.encode("utf-8")):
+            st.info("Informe a senha temporária para continuar.")
+            st.stop()
+
     st.markdown("""
         <style>
         .title-container {
@@ -4058,6 +4071,19 @@ def run_app():
     # =========================================================
     if opcao == "Extrator de Diários Oficiais":
         st.subheader("Automação dos Diários Oficiais")
+
+        destino = st.radio(
+            "Planilha de destino",
+            ("Planilha do Google", "Planilha do WebDrive"),
+            index=0, key="gil_destino_extracao",
+        )
+        if destino == "Planilha do WebDrive":
+            # Importação tardia: Google não depende dos módulos WebDrive.
+            from modo_webdrive import executar_interface
+            executar_interface()
+            return
+        # Ao voltar ao Google, descarta a preparação ODS anterior.
+        st.session_state.pop("webdrive_preparado", None)
 
         try:
             spreadsheet = conectar_gsheet()
