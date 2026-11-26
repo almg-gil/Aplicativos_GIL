@@ -4006,17 +4006,8 @@ Regras estritas:
 def run_app():
     st.set_page_config(page_title="Assistente Virtual da GIL")
 
-    # Somente desative esta barreira depois de restringir o acesso no Community Cloud.
-    modo_acesso = str(st.secrets.get("AUTH_MODE", "senha_temporaria")).strip().lower()
-    if modo_acesso != "streamlit_private":
-        senha = str(st.secrets.get("SENHA_TESTE_STREAMLIT", ""))
-        if not senha:
-            st.error("Configure SENHA_TESTE_STREAMLIT nos Secrets antes de usar o aplicativo.")
-            st.stop()
-        chave = st.text_input("Senha temporária do aplicativo", type="password", key="gil_senha_temporaria")
-        if not chave or not hmac.compare_digest(chave.encode("utf-8"), senha.encode("utf-8")):
-            st.info("Informe a senha temporária para continuar.")
-            st.stop()
+    from autenticacao_gil import exigir_acesso
+    exigir_acesso()
 
     st.markdown("""
         <style>
