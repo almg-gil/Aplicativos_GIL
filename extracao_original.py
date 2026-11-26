@@ -1,0 +1,3299 @@
+# -*- coding: utf-8 -*-
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+import sys
+import time
+import streamlit as st
+import re
+import pandas as pd
+import pypdf
+import io
+import csv
+import fitz  # PyMuPDF
+import requests
+import base64
+import pdfplumber
+import json
+from datetime import datetime, timedelta, date
+import os
+import docx
+import subprocess
+import tempfile
+import shutil
+from zoneinfo import ZoneInfo
+import unicodedata
+
+# =========================
+# CONFIG GOOGLE SHEETS
+# =========================
+
+
+ABA_MODELO = "MODELO"
+@st.cache_resource
+def garantir_playwright_chromium():
+    cache_dir = os.path.expanduser("~/.cache/ms-playwright")
+    chromium_ok = False
+
+    if os.path.isdir(cache_dir):
+        try:
+            chromium_ok = any("chromium" in nome.lower() for nome in os.listdir(cache_dir))
+        except Exception:
+            chromium_ok = False
+
+    if not chromium_ok:
+        subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium"],
+            check=True
+        )
+
+
+# =========================
+# CONSTANTES E MAPEAMENTOS
+# =========================
+TIPO_MAP_NORMA = {
+    "LEI": "LEI",
+    "RESOLUÇÃO": "RAL",
+    "LEI COMPLEMENTAR": "LCP",
+    "EMENDA À CONSTITUIÇÃO": "EMC",
+    "DELIBERAÇÃO DA MESA": "DLB"
+}
+
+TIPO_MAP_PROP = {
+    "PROJETO DE LEI": "PL",
+    "PROJETO DE LEI COMPLEMENTAR": "PLC",
+    "INDICAÇÃO": "IND",
+    "PROJETO DE RESOLUÇÃO": "PRE",
+    "PROPOSTA DE EMENDA À CONSTITUIÇÃO": "PEC",
+    "MENSAGEM": "MSG",
+    "VETO": "VET",
+    "RELATÓRIO DE EVENTO INSTITUCIONAL": "REL",
+}
+
+SIGLA_MAP_PARECER = {
+    "requerimento": "RQN",
+    "projeto de lei": "PL",
+    "pl": "PL",
+    "projeto de resolução": "PRE",
+    "pre": "PRE",
+    "proposta de emenda à constituição": "PEC",
+    "pec": "PEC",
+    "projeto de lei complementar": "PLC",
+    "plc": "PLC",
+    "emendas ao projeto de lei": "EMENDA"
+}
+
+meses = {
+    "JANEIRO": "01",
+    "FEVEREIRO": "02",
+    "MARÇO": "03",
+    "MARCO": "03",
+    "ABRIL": "04",
+    "MAIO": "05",
+    "JUNHO": "06",
+    "JULHO": "07",
+    "AGOSTO": "08",
+    "SETEMBRO": "09",
+    "OUTUBRO": "10",
+    "NOVEMBRO": "11",
+    "DEZEMBRO": "12"
+}
+
+# =========================
+# GOOGLE SHEETS
+# =========================
+TIMEZONE_PADRAO = "America/Sao_Paulo"
+COLUNAS_RESPONSAVEIS = (7, 8, 14, 15)  # G, H, N, O
+PADRAO_AFASTAMENTO = re.compile(r"^\s*(licen[cç]a|f[eé]rias)\s*[:\-]\s*(.+?)\s*$", re.IGNORECASE)
+
+GRUPOS_EQUIPE = {
+    "BIBLIOTECARIO": ["TIAGO", "PAULO", "CIRLENE", "SILVANA", "ROBSON", "MARCIA"],
+    "BIBLIOTECARIO_TARDE": ["ROBSON", "SILVANA"],
+    "BIBLIOTECARIO_EXEC": ["TIAGO", "PAULO", "CIRLENE", "MARCIA"],
+    "ESTAGIARIO": ["ISABELA", "NÉLIA"],
+    "TECNICO": ["ISADORA", "CLÉLIA"],
+}
+
+REGRAS_TAREFA = {
+    "implantacao_normas_dne": {
+        "grupos": ["ESTAGIARIO", "TECNICO"],
+        "excluir": ["CLÉLIA", "MARCIA"],
+    },
+    "implantacao_normas_nao_dne": {
+        "grupos": ["ESTAGIARIO", "TECNICO", "BIBLIOTECARIO_EXEC"],
+        "excluir": ["PAULO", "CLÉLIA", "MARCIA"],
+    },
+    "revisao_normas": {
+        "grupos": ["BIBLIOTECARIO"],
+        "excluir": ["CLÉLIA", "MARCIA"],
+    },
+
+    "execucao_proposicoes_nao_up": {
+        "grupos": ["BIBLIOTECARIO_EXEC", "ESTAGIARIO", "TECNICO"],
+        "excluir": ["CLÉLIA"],
+    },
+    "execucao_proposicoes_up": {
+        "incluir": ["CLÉLIA", "ISADORA"],
+    },
+    "revisao_proposicoes": {
+        "grupos": ["BIBLIOTECARIO"],
+    },
+
+    "execucao_requerimentos": {
+        "grupos": ["BIBLIOTECARIO_EXEC", "ESTAGIARIO", "TECNICO"],
+    },
+    "revisao_requerimentos": {
+        "grupos": ["BIBLIOTECARIO"],
+    },
+
+    "execucao_pareceres": {
+        "grupos": ["BIBLIOTECARIO_EXEC", "ESTAGIARIO", "TECNICO"],
+        "excluir": ["CLÉLIA"],
+    },
+    "revisao_pareceres": {
+        "grupos": ["BIBLIOTECARIO"],
+    },
+}
+ROTULOS_TAREFA = {
+    "implantacao_normas_dne": "Implantação de normas DNE",
+    "implantacao_normas_nao_dne": "Implantação de normas não DNE",
+    "revisao_normas": "Revisão de normas",
+    "execucao_proposicoes_nao_up": "Execução de proposições não UP",
+    "execucao_proposicoes_up": "Execução de proposições UP",
+    "revisao_proposicoes": "Revisão de proposições",
+    "execucao_requerimentos": "Execução de requerimentos",
+    "revisao_requerimentos": "Revisão de requerimentos",
+    "execucao_pareceres": "Execução de pareceres",
+    "revisao_pareceres": "Revisão de pareceres",
+}
+
+
+def remover_acentos(texto: str) -> str:
+    texto = str(texto or "")
+    return "".join(
+        ch for ch in unicodedata.normalize("NFD", texto)
+        if unicodedata.category(ch) != "Mn"
+    )
+
+
+def nome_planilha(nome: str) -> str:
+    return re.sub(r"\s+", " ", str(nome or "").strip()).upper()
+
+
+def normalizar_nome_chave(nome: str) -> str:
+    return remover_acentos(nome_planilha(nome))
+
+
+def construir_mapa_nomes_equipe() -> dict:
+    mapa = {}
+    for pessoas in GRUPOS_EQUIPE.values():
+        for pessoa in pessoas:
+            mapa[normalizar_nome_chave(pessoa)] = nome_planilha(pessoa)
+    return mapa
+
+
+MAPA_NOMES_EQUIPE = construir_mapa_nomes_equipe()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def candidatos_para_tarefa(chave_tarefa: str, indisponiveis: set[str] | None = None) -> list[str]:
+    regra = REGRAS_TAREFA.get(chave_tarefa, {})
+    indisponiveis = {nome_planilha(x) for x in (indisponiveis or set())}
+    excluir = {nome_planilha(x) for x in regra.get("excluir", [])}
+
+    candidatos = []
+    vistos = set()
+
+    for grupo in regra.get("grupos", []):
+        for pessoa in GRUPOS_EQUIPE.get(grupo, []):
+            pessoa_fmt = nome_planilha(pessoa)
+            if not pessoa_fmt or pessoa_fmt in vistos or pessoa_fmt in excluir or pessoa_fmt in indisponiveis:
+                continue
+            vistos.add(pessoa_fmt)
+            candidatos.append(pessoa_fmt)
+
+    for pessoa in regra.get("incluir", []):
+        pessoa_fmt = nome_planilha(pessoa)
+        if not pessoa_fmt or pessoa_fmt in vistos or pessoa_fmt in excluir or pessoa_fmt in indisponiveis:
+            continue
+        vistos.add(pessoa_fmt)
+        candidatos.append(pessoa_fmt)
+
+    return candidatos
+
+def pessoa_pertence_ao_grupo(nome: str, grupo: str) -> bool:
+    nome_fmt = nome_planilha(nome)
+    return nome_fmt in {nome_planilha(p) for p in GRUPOS_EQUIPE.get(grupo, [])}
+
+
+def inicializar_df_responsaveis(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None:
+        return pd.DataFrame()
+
+    df = df.copy()
+
+    if "ResponsavelExecucao" not in df.columns:
+        df["ResponsavelExecucao"] = ""
+
+    if "ResponsavelRevisao" not in df.columns:
+        df["ResponsavelRevisao"] = ""
+
+    return df
+
+
+def distribuir_para_posicoes(total_linhas: int, posicoes: list[int], pessoas: list[str]) -> dict[int, str]:
+    distribuicao = distribuir_em_blocos(len(posicoes), pessoas)
+    return {pos: nome for pos, nome in zip(posicoes, distribuicao)}
+
+
+def eh_norma_dne(r: pd.Series) -> bool:
+    return nome_planilha(r.get("Tipo", "")) == "DNE"
+
+
+def eh_proposicao_up(r: pd.Series) -> bool:
+    valor = r.get("Observação", r.get("Categoria", ""))
+    return nome_planilha(valor) == "UP"
+
+REQ_SEM_TRATAMENTO = {
+    "VOTO DE CONGRATULAÇÕES",
+    "MANIFESTAÇÃO DE PESAR",
+    "MANIFESTAÇÃO DE REPÚDIO",
+    "MOÇÃO DE APLAUSO",
+    "MANIFESTAÇÃO DE APOIO",
+    "APLAUSO",
+}
+
+
+def requerimento_sem_tratamento(r: pd.Series) -> bool:
+    valor = r.get("Observação", r.get("Classificação", ""))
+    return nome_planilha(valor) in REQ_SEM_TRATAMENTO
+
+
+def distribuir_revisores_sem_mesma_pessoa(execucoes: list[str], candidatos_rev: list[str]) -> list[str]:
+    execucoes = [nome_planilha(x) for x in execucoes]
+    candidatos_rev = [nome_planilha(x) for x in candidatos_rev if str(x).strip()]
+
+    if not execucoes:
+        return []
+    if not candidatos_rev:
+        return [""] * len(execucoes)
+
+    revisao_base = distribuir_em_blocos(len(execucoes), candidatos_rev)
+    uso = {p: 0 for p in candidatos_rev}
+    revisoes = []
+
+    for i, executor in enumerate(execucoes):
+        preferido = revisao_base[i] if i < len(revisao_base) else ""
+
+        if preferido and preferido != executor:
+            escolhido = preferido
+        else:
+            opcoes = [p for p in candidatos_rev if p != executor]
+
+            if not opcoes:
+                escolhido = ""
+            else:
+                menor_uso = min(uso[p] for p in opcoes)
+                escolhido = next(
+                    p for p in candidatos_rev
+                    if p in opcoes and uso[p] == menor_uso
+                )
+
+        revisoes.append(escolhido)
+        if escolhido:
+            uso[escolhido] += 1
+
+    return revisoes
+
+
+class DistribuidorRoundRobin:
+    def __init__(self):
+        self._indices = {}
+
+    def proximo(self, chave: str, candidatos: list[str]) -> str:
+        if not chave or not candidatos:
+            return ""
+
+        idx_atual = self._indices.get(chave, 0)
+        escolhido = candidatos[idx_atual % len(candidatos)]
+        self._indices[chave] = idx_atual + 1
+        return escolhido
+
+
+class DistribuidorCargaGlobal:
+    def __init__(self):
+        # Execuções e revisões entram na mesma carga total do dia.
+        self.cargas = {}
+
+        # Em caso de empate, prioriza quem recebeu uma tarefa há mais tempo.
+        self.ultima_atribuicao = {}
+        self._sequencia = 0
+
+    def _escolher(
+        self,
+        candidatos: list[str],
+        excluir: set[str] | None = None,
+    ) -> str:
+        excluir = {nome_planilha(x) for x in (excluir or set())}
+
+        candidatos_validos = []
+        vistos = set()
+
+        for candidato in candidatos:
+            pessoa = nome_planilha(candidato)
+            if not pessoa or pessoa in vistos or pessoa in excluir:
+                continue
+            vistos.add(pessoa)
+            candidatos_validos.append(pessoa)
+
+        if not candidatos_validos:
+            return ""
+
+        for pessoa in candidatos_validos:
+            self.cargas.setdefault(pessoa, 0)
+            self.ultima_atribuicao.setdefault(pessoa, -1)
+
+        menor_carga = min(self.cargas[pessoa] for pessoa in candidatos_validos)
+        empatados = [
+            pessoa
+            for pessoa in candidatos_validos
+            if self.cargas[pessoa] == menor_carga
+        ]
+
+        escolhido = min(
+            empatados,
+            key=lambda pessoa: (
+                self.ultima_atribuicao[pessoa],
+                candidatos_validos.index(pessoa),
+            ),
+        )
+
+        self.cargas[escolhido] += 1
+        self.ultima_atribuicao[escolhido] = self._sequencia
+        self._sequencia += 1
+
+        return escolhido
+
+    def proximo_executor(self, candidatos: list[str]) -> str:
+        return self._escolher(candidatos)
+
+    def proximo_revisor(
+        self,
+        candidatos: list[str],
+        executor: str = "",
+    ) -> str:
+        excluir = {executor} if executor else set()
+        return self._escolher(
+            candidatos,
+            excluir=excluir,
+        )
+
+
+def linha_continuacao_norma(r: pd.Series) -> bool:
+    campos_base = [
+        r.get("Página", ""),
+        r.get("Coluna", ""),
+        r.get("Sanção", ""),
+        r.get("Tipo", ""),
+        r.get("Número", ""),
+    ]
+    return all(str(v).strip() == "" for v in campos_base) and str(r.get("Alterações", "")).strip() != ""
+
+
+def distribuir_responsaveis_dataframe(
+    df: pd.DataFrame,
+    chave_execucao: str = "",
+    chave_revisao: str = "",
+    indisponiveis: set[str] | None = None,
+    distribuidor: DistribuidorRoundRobin | None = None,
+    replicar_em_linhas_continuacao: bool = False,
+) -> pd.DataFrame:
+    if df is None:
+        return pd.DataFrame()
+
+    df = df.copy()
+    if df.empty:
+        if "ResponsavelExecucao" not in df.columns:
+            df["ResponsavelExecucao"] = ""
+        if "ResponsavelRevisao" not in df.columns:
+            df["ResponsavelRevisao"] = ""
+        return df
+
+    distribuidor = distribuidor or DistribuidorRoundRobin()
+    candidatos_exec = candidatos_para_tarefa(chave_execucao, indisponiveis) if chave_execucao else []
+    candidatos_rev = candidatos_para_tarefa(chave_revisao, indisponiveis) if chave_revisao else []
+
+    execucoes = []
+    revisoes = []
+    ultimo_exec = ""
+    ultimo_rev = ""
+
+    for _, r in df.iterrows():
+        if replicar_em_linhas_continuacao and linha_continuacao_norma(r):
+            execucoes.append(ultimo_exec)
+            revisoes.append(ultimo_rev)
+            continue
+
+        ultimo_exec = distribuidor.proximo(chave_execucao, candidatos_exec) if chave_execucao else ""
+        ultimo_rev = distribuidor.proximo(chave_revisao, candidatos_rev) if chave_revisao else ""
+        execucoes.append(ultimo_exec)
+        revisoes.append(ultimo_rev)
+
+    df["ResponsavelExecucao"] = execucoes
+    df["ResponsavelRevisao"] = revisoes
+    return df
+
+
+def compactar_indices_em_blocos(
+    df: pd.DataFrame,
+    indices: list,
+) -> pd.DataFrame:
+    """
+    Mantém exatamente as quantidades e as duplas executor/revisor já
+    calculadas, mas reorganiza as atribuições em blocos contínuos.
+    """
+    if df is None or df.empty or not indices:
+        return df
+
+    ordem_executores = []
+    revisores_por_executor = {}
+
+    for idx in indices:
+        executor = nome_planilha(df.at[idx, "ResponsavelExecucao"])
+        revisor = nome_planilha(df.at[idx, "ResponsavelRevisao"])
+
+        if executor not in revisores_por_executor:
+            ordem_executores.append(executor)
+            revisores_por_executor[executor] = []
+
+        revisores_por_executor[executor].append(revisor)
+
+    novas_atribuicoes = []
+
+    for executor in ordem_executores:
+        revisores = revisores_por_executor[executor]
+        ordem_revisores = []
+        contagem_revisores = {}
+
+        for revisor in revisores:
+            if revisor not in contagem_revisores:
+                ordem_revisores.append(revisor)
+                contagem_revisores[revisor] = 0
+            contagem_revisores[revisor] += 1
+
+        for revisor in ordem_revisores:
+            qtd = contagem_revisores[revisor]
+            novas_atribuicoes.extend([(executor, revisor)] * qtd)
+
+    for idx, (executor, revisor) in zip(indices, novas_atribuicoes):
+        df.at[idx, "ResponsavelExecucao"] = executor
+        df.at[idx, "ResponsavelRevisao"] = revisor
+
+    return df
+
+
+def compactar_normas_em_blocos(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compacta separadamente normas DNE e não DNE e mantém linhas de
+    continuação com os mesmos responsáveis da norma principal.
+    """
+    if df is None or df.empty:
+        return df
+
+    df = df.copy()
+
+    indices_dne = []
+    indices_nao_dne = []
+
+    for idx, r in df.iterrows():
+        if linha_continuacao_norma(r):
+            continue
+
+        if eh_norma_dne(r):
+            indices_dne.append(idx)
+        else:
+            indices_nao_dne.append(idx)
+
+    df = compactar_indices_em_blocos(df, indices_dne)
+    df = compactar_indices_em_blocos(df, indices_nao_dne)
+
+    ultimo_executor = ""
+    ultimo_revisor = ""
+
+    for idx, r in df.iterrows():
+        if linha_continuacao_norma(r):
+            df.at[idx, "ResponsavelExecucao"] = ultimo_executor
+            df.at[idx, "ResponsavelRevisao"] = ultimo_revisor
+        else:
+            ultimo_executor = df.at[idx, "ResponsavelExecucao"]
+            ultimo_revisor = df.at[idx, "ResponsavelRevisao"]
+
+    return df
+
+
+def compactar_proposicoes_em_blocos(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compacta separadamente proposições UP e não UP.
+    """
+    if df is None or df.empty:
+        return df
+
+    df = df.copy()
+
+    indices_up = []
+    indices_nao_up = []
+
+    for idx, r in df.iterrows():
+        if eh_proposicao_up(r):
+            indices_up.append(idx)
+        else:
+            indices_nao_up.append(idx)
+
+    df = compactar_indices_em_blocos(df, indices_up)
+    df = compactar_indices_em_blocos(df, indices_nao_up)
+
+    return df
+
+
+def compactar_requerimentos_em_blocos(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compacta somente requerimentos que recebem tratamento. Os que não
+    recebem tratamento permanecem com '-' nas posições originais.
+    """
+    if df is None or df.empty:
+        return df
+
+    df = df.copy()
+
+    indices_tratamento = [
+        idx
+        for idx, r in df.iterrows()
+        if not requerimento_sem_tratamento(r)
+    ]
+
+    return compactar_indices_em_blocos(df, indices_tratamento)
+
+
+def compactar_pareceres_em_blocos(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+
+    df = df.copy()
+    return compactar_indices_em_blocos(df, list(df.index))
+
+
+def distribuir_tarefas_extraidas_em_blocos(
+    df_exec: pd.DataFrame,
+    df_adm: pd.DataFrame,
+    df_leg_normas: pd.DataFrame,
+    df_props: pd.DataFrame,
+    df_reqs: pd.DataFrame,
+    df_pareceres: pd.DataFrame,
+    indisponiveis: set[str] | None = None,
+):
+    distribuidor_global = DistribuidorCargaGlobal()
+
+    df_exec = atribuir_responsaveis_normas(
+        df_exec,
+        indisponiveis=indisponiveis,
+        replicar_em_linhas_continuacao=True,
+        distribuidor_global=distribuidor_global,
+    )
+
+    df_adm = atribuir_responsaveis_normas(
+        df_adm,
+        indisponiveis=indisponiveis,
+        replicar_em_linhas_continuacao=True,
+        distribuidor_global=distribuidor_global,
+    )
+
+    df_leg_normas = atribuir_responsaveis_normas(
+        df_leg_normas,
+        indisponiveis=indisponiveis,
+        replicar_em_linhas_continuacao=True,
+        distribuidor_global=distribuidor_global,
+    )
+
+    df_props = atribuir_responsaveis_proposicoes(
+        df_props,
+        indisponiveis=indisponiveis,
+        distribuidor_global=distribuidor_global,
+    )
+
+    df_reqs = atribuir_responsaveis_requerimentos(
+        df_reqs,
+        indisponiveis=indisponiveis,
+        distribuidor_global=distribuidor_global,
+    )
+
+    df_pareceres = atribuir_responsaveis_pareceres(
+        df_pareceres,
+        indisponiveis=indisponiveis,
+        distribuidor_global=distribuidor_global,
+    )
+
+    # Mantém o balanceamento calculado acima e apenas reorganiza as
+    # atribuições em blocos contínuos, tanto na execução quanto na revisão.
+    df_exec = compactar_normas_em_blocos(df_exec)
+    df_adm = compactar_normas_em_blocos(df_adm)
+    df_leg_normas = compactar_normas_em_blocos(df_leg_normas)
+    df_props = compactar_proposicoes_em_blocos(df_props)
+    df_reqs = compactar_requerimentos_em_blocos(df_reqs)
+    df_pareceres = compactar_pareceres_em_blocos(df_pareceres)
+
+    return df_exec, df_adm, df_leg_normas, df_props, df_reqs, df_pareceres
+
+
+def validar_pools_distribuicao(indisponiveis: set[str] | None = None) -> list[str]:
+    avisos = []
+    for chave, rotulo in ROTULOS_TAREFA.items():
+        candidatos = candidatos_para_tarefa(chave, indisponiveis)
+        if not candidatos:
+            avisos.append(f"Sem pessoas disponíveis para {rotulo}.")
+    return avisos
+
+
+def nome_aba_data(data_str: str) -> str:
+    return datetime.strptime(data_str, "%d/%m/%Y").strftime("%d/%m")
+
+
+def listar_nomes_abas(spreadsheet) -> set:
+    return {ws.title.strip() for ws in spreadsheet.worksheets()}
+
+
+def aba_existe(spreadsheet, data_str: str) -> tuple[bool, str]:
+    nome_aba = nome_aba_data(data_str)
+    nome_aba_alt = nome_aba.replace("/", "-")
+
+    nomes = listar_nomes_abas(spreadsheet)
+
+    if nome_aba in nomes:
+        return True, nome_aba
+    if nome_aba_alt in nomes:
+        return True, nome_aba_alt
+
+    return False, nome_aba
+
+
+def obter_ou_criar_aba_data(spreadsheet, data_str: str, nome_modelo: str = ABA_MODELO):
+    existe, nome_encontrado = aba_existe(spreadsheet, data_str)
+    if existe:
+        raise ValueError(
+            f"A aba '{nome_encontrado}' já existe. Operação bloqueada para evitar sobrescrita."
+        )
+
+    nome_aba = nome_aba_data(data_str)
+    modelo = spreadsheet.worksheet(nome_modelo)
+
+    try:
+        spreadsheet.duplicate_sheet(
+            source_sheet_id=modelo.id,
+            new_sheet_name=nome_aba
+        )
+        return spreadsheet.worksheet(nome_aba)
+    except Exception:
+        nome_aba_alt = nome_aba.replace("/", "-")
+        spreadsheet.duplicate_sheet(
+            source_sheet_id=modelo.id,
+            new_sheet_name=nome_aba_alt
+        )
+        return spreadsheet.worksheet(nome_aba_alt)
+
+
+def encontrar_linha(ws, texto: str, ocorrencia: int = 1):
+    valores = ws.col_values(1)
+    alvo = texto.strip().upper()
+    cont = 0
+
+    for idx, valor in enumerate(valores, start=1):
+        if str(valor).strip().upper() == alvo:
+            cont += 1
+            if cont == ocorrencia:
+                return idx
+    raise ValueError(f"Marcador '{texto}' (ocorrência {ocorrencia}) não encontrado na aba.")
+
+
+def encontrar_linha_safe(ws, texto: str, ocorrencia: int = 1):
+    try:
+        return encontrar_linha(ws, texto, ocorrencia)
+    except Exception:
+        return None
+
+
+def num_to_col(n: int) -> str:
+    resultado = ""
+    while n > 0:
+        n, resto = divmod(n - 1, 26)
+        resultado = chr(65 + resto) + resultado
+    return resultado
+
+
+def escrever_bloco(ws, linha_inicial: int, linhas: list[list], mesclar_coluna_a: bool = True):
+    if not linhas:
+        return
+
+    ncols = max(len(l) for l in linhas)
+    linhas = [l + [""] * (ncols - len(l)) for l in linhas]
+
+    formulas_para_reaplicar = []
+    for i, linha in enumerate(linhas, start=linha_inicial):
+        for j, valor in enumerate(linha, start=1):
+            if isinstance(valor, str) and valor.startswith("="):
+                formulas_para_reaplicar.append({
+                    "range": f"{num_to_col(j)}{i}",
+                    "values": [[valor]]
+                })
+
+    extras = len(linhas) - 1
+    if extras > 0:
+        ws.insert_rows(
+            [[""] * ncols for _ in range(extras)],
+            row=linha_inicial + 1,
+            value_input_option="USER_ENTERED",
+            inherit_from_before=True
+        )
+
+    col_fim = num_to_col(ncols)
+    linha_fim = linha_inicial + len(linhas) - 1
+    faixa = f"A{linha_inicial}:{col_fim}{linha_fim}"
+
+    ws.update(
+        faixa,
+        linhas,
+        value_input_option="USER_ENTERED"
+    )
+
+    ws.format(
+        faixa,
+        {
+            "backgroundColor": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0
+            },
+            "horizontalAlignment": "CENTER",
+            "verticalAlignment": "MIDDLE",
+            "textFormat": {
+                "fontFamily": "Inconsolata",
+                "fontSize": 10,
+                "bold": True
+            }
+        }
+    )
+
+    if mesclar_coluna_a and len(linhas) > 1:
+        faixa_merge = f"A{linha_inicial}:A{linha_fim}"
+
+        try:
+            ws.unmerge_cells(faixa_merge)
+        except Exception:
+            pass
+
+        ws.merge_cells(faixa_merge)
+
+        ws.format(
+            faixa_merge,
+            {
+                "horizontalAlignment": "CENTER",
+                "verticalAlignment": "MIDDLE",
+                "textFormat": {
+                    "fontFamily": "Inconsolata",
+                    "fontSize": 10,
+                    "bold": True
+                }
+            }
+        )
+
+    if formulas_para_reaplicar:
+        ws.batch_update(
+            formulas_para_reaplicar,
+            value_input_option="USER_ENTERED"
+        )
+
+
+def mesclar_linhas_intervalo(ws, linha_inicial: int, qtd_linhas: int, col_inicial: int, col_final: int):
+    if qtd_linhas <= 0:
+        return
+
+    start_row = linha_inicial - 1
+    end_row = linha_inicial + qtd_linhas - 1
+    start_col = col_inicial - 1
+    end_col = col_final
+
+    faixa_total = {
+        "sheetId": ws.id,
+        "startRowIndex": start_row,
+        "endRowIndex": end_row,
+        "startColumnIndex": start_col,
+        "endColumnIndex": end_col
+    }
+
+    try:
+        ws.spreadsheet.batch_update({
+            "requests": [
+                {
+                    "unmergeCells": {
+                        "range": faixa_total
+                    }
+                }
+            ]
+        })
+    except Exception:
+        pass
+
+    requests_batch = []
+
+    for linha in range(linha_inicial, linha_inicial + qtd_linhas):
+        faixa_linha = {
+            "sheetId": ws.id,
+            "startRowIndex": linha - 1,
+            "endRowIndex": linha,
+            "startColumnIndex": start_col,
+            "endColumnIndex": end_col
+        }
+
+        requests_batch.append({
+            "mergeCells": {
+                "range": faixa_linha,
+                "mergeType": "MERGE_ALL"
+            }
+        })
+
+        requests_batch.append({
+            "repeatCell": {
+                "range": faixa_linha,
+                "cell": {
+                    "userEnteredFormat": {
+                        "horizontalAlignment": "LEFT",
+                        "verticalAlignment": "MIDDLE",
+                        "textFormat": {
+                            "fontFamily": "Inconsolata",
+                            "fontSize": 10,
+                            "bold": True
+                        }
+                    }
+                },
+                "fields": "userEnteredFormat(horizontalAlignment,verticalAlignment,textFormat)"
+            }
+        })
+
+    if requests_batch:
+        ws.spreadsheet.batch_update({"requests": requests_batch})
+
+
+def escrever_celula(ws, celula: str, valor):
+    ws.update(celula, [[valor]], value_input_option="USER_ENTERED")
+
+
+def desmesclar_intervalo(ws, linha_inicial: int, qtd_linhas: int, col_inicial: int, col_final: int):
+    if qtd_linhas <= 0:
+        return
+
+    faixa_total = {
+        "sheetId": ws.id,
+        "startRowIndex": linha_inicial - 1,
+        "endRowIndex": linha_inicial + qtd_linhas - 1,
+        "startColumnIndex": col_inicial - 1,
+        "endColumnIndex": col_final,
+    }
+
+    try:
+        ws.spreadsheet.batch_update({
+            "requests": [
+                {
+                    "unmergeCells": {
+                        "range": faixa_total
+                    }
+                }
+            ]
+        })
+    except Exception:
+        pass
+
+
+def aplicar_cor_responsaveis(ws, linha_inicial: int, linhas: list[list], colunas=COLUNAS_RESPONSAVEIS):
+    if not linhas:
+        return
+
+    requests_batch = []
+    for idx_linha, linha in enumerate(linhas, start=linha_inicial):
+        for col in colunas:
+            if col > len(linha):
+                continue
+
+            valor = str(linha[col - 1]).strip()
+            if not valor or valor == "-":
+                continue
+
+            requests_batch.append({
+                "repeatCell": {
+                    "range": {
+                        "sheetId": ws.id,
+                        "startRowIndex": idx_linha - 1,
+                        "endRowIndex": idx_linha,
+                        "startColumnIndex": col - 1,
+                        "endColumnIndex": col,
+                    },
+                    "cell": {
+                        "userEnteredFormat": {
+                            "textFormat": {
+                                "foregroundColor": {
+                                    "red": 1.0,
+                                    "green": 0.00,
+                                    "blue": 0.00,
+                                },
+                                "bold": True,
+                            }
+                        }
+                    },
+                    "fields": "userEnteredFormat.textFormat.foregroundColor,userEnteredFormat.textFormat.bold"
+                }
+            })
+
+    if requests_batch:
+        ws.spreadsheet.batch_update({"requests": requests_batch})
+
+
+def contar_alteracoes(df: pd.DataFrame) -> int:
+    if df is None or df.empty or "Alterações" not in df.columns:
+        return 0
+    return int(
+        df["Alterações"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .ne("")
+        .sum()
+    )
+
+def obter_quantidade_e_vides(alteracao):
+    texto = str(alteracao or "").strip().upper()
+
+    if not texto:
+        return "-", "-"
+
+    if texto == "DEC 48589 2023":
+        return 0, 1
+
+    return 1, 1
+
+
+def contar_normas_principais(df: pd.DataFrame) -> int:
+    if df is None or df.empty:
+        return 0
+
+    return int(
+        (~df.apply(linha_continuacao_norma, axis=1)).sum()
+    )
+
+
+def somar_quantidade_vides(df: pd.DataFrame) -> tuple[int, int]:
+    if df is None or df.empty or "Alterações" not in df.columns:
+        return 0, 0
+
+    total_quantidade = 0
+    total_vides = 0
+
+    for alteracao in df["Alterações"].fillna("").astype(str):
+        qtd, vides = obter_quantidade_e_vides(alteracao)
+
+        if qtd != "-":
+            total_quantidade += int(qtd)
+
+        if vides != "-":
+            total_vides += int(vides)
+
+    return total_quantidade, total_vides
+
+
+# =========================
+# DATA / UI OPERACIONAL
+# =========================
+def ajustar_data_operacional(dt: date) -> date:
+    # weekday(): segunda=0 ... domingo=6
+    if dt.weekday() == 0:  # segunda-feira
+        return dt - timedelta(days=2)  # sábado anterior
+    if dt.weekday() == 6:  # domingo
+        return dt - timedelta(days=1)  # sábado anterior
+    return dt
+
+
+def data_padrao_operacional() -> date:
+    return ajustar_data_operacional(date.today())
+
+
+def preparar_datas(data_str):
+    dt = datetime.strptime(data_str, "%d/%m/%Y")
+    return {
+        "yyyy": dt.strftime("%Y"),
+        "mm": dt.strftime("%m"),
+        "dd": dt.strftime("%d"),
+        "yyyymmdd": dt.strftime("%Y%m%d"),
+        "iso_exec": dt.strftime("%Y-%m-%dT06:00:00.000Z"),
+        "display": dt.strftime("%d/%m/%Y"),
+    }
+
+
+# =========================
+# URLS
+# =========================
+def montar_urls(d):
+    return {
+        "executivo_html": (
+            "https://www.jornalminasgerais.mg.gov.br/edicao-do-dia"
+            f"?dados=%7B%22dataPublicacaoSelecionada%22:%22{d['iso_exec']}%22%7D"
+        ),
+        "legislativo": (
+            f"https://diariolegislativo.almg.gov.br/"
+            f"{d['yyyy']}/L{d['yyyymmdd']}.pdf"
+        ),
+        "administrativo": (
+            "https://intra.almg.gov.br/export/sites/default/"
+            "acontece/diario-administrativo/arquivos/"
+            f"{d['yyyy']}/{d['mm']}/L{d['yyyymmdd']}.pdf"
+        ),
+    }
+
+
+# =========================
+# DOWNLOAD
+# =========================
+def baixar(url):
+    r = requests.get(url, timeout=60)
+    r.raise_for_status()
+    return r.content
+
+
+def nome_arquivo_diario_administrativo(data_ref: date) -> str:
+    return f"DA_{data_ref.strftime('%Y%m%d')}(signed).pdf"
+
+
+
+
+# =========================
+# UTILITÁRIOS EXTRATOR
+# =========================
+def classify_req(segment: str) -> str:
+    s = re.sub(r"\s+", " ", segment).strip().lower()
+
+    if "seja formulado voto de congratulações" in s:
+        return "Voto de congratulações"
+    if "manifestação de pesar" in s:
+        return "Manifestação de pesar"
+    if "manifestação de repúdio" in s:
+        return "Manifestação de repúdio"
+    if "moção de aplauso" in s:
+        return "Moção de aplauso"
+    if "manifestação de apoio" in s:
+        return "Manifestação de apoio"
+    return ""
+
+
+# =========================
+# EXECUTIVO - DOWNLOAD PDF
+# =========================
+def baixar_pdf_jornal_mg_por_link(url_pagina: str) -> bytes:
+    ultimo_erro = None
+
+    for tentativa in range(3):
+        try:
+            match = re.search(r'dados=([^&]+)', url_pagina)
+            if not match:
+                raise Exception("Parâmetro dados não encontrado")
+
+            dados_codificados = match.group(1)
+            json_str = requests.utils.unquote(dados_codificados)
+            dados = json.loads(json_str)
+
+            data_iso = dados["dataPublicacaoSelecionada"]
+            data = data_iso.split("T")[0]
+
+            api_url = (
+                "https://www.jornalminasgerais.mg.gov.br/api/v1/Jornal/"
+                f"ObterEdicaoPorDataPublicacao?dataPublicacao={data}"
+            )
+
+            with sync_playwright() as p:
+                browser = p.chromium.launch(
+                    headless=True,
+                    args=[
+                        "--no-sandbox",
+                        "--disable-dev-shm-usage"
+                    ]
+                )
+
+                context = browser.new_context(
+                    user_agent=(
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/122.0.0.0 Safari/537.36"
+                    ),
+                    locale="pt-BR"
+                )
+
+                page = context.new_page()
+                page.goto(url_pagina, wait_until="domcontentloaded", timeout=60000)
+                page.wait_for_timeout(2500)
+
+                resultado = page.evaluate(
+                    """
+                    async ({ apiUrl }) => {
+                        const resp = await fetch(apiUrl, {
+                            method: "GET",
+                            credentials: "include",
+                            headers: {
+                                "accept": "application/json, text/plain, */*"
+                            }
+                        });
+
+                        const text = await resp.text();
+                        return {
+                            status: resp.status,
+                            text
+                        };
+                    }
+                    """,
+                    {"apiUrl": api_url}
+                )
+
+                browser.close()
+
+            status = resultado["status"]
+            if status != 200:
+                raise Exception(f"API do Executivo retornou HTTP {status}")
+
+            dados_api = json.loads(resultado["text"])
+            base64_pdf = dados_api["dados"]["arquivoCadernoPrincipal"]["arquivo"]
+            return base64.b64decode(base64_pdf)
+
+        except PlaywrightTimeoutError as e:
+            ultimo_erro = f"Timeout no Playwright: {e}"
+        except Exception as e:
+            ultimo_erro = e
+
+        if tentativa < 2:
+            time.sleep(2 * (tentativa + 1))
+
+    raise Exception(f"Erro ao obter PDF do Executivo após 3 tentativas: {ultimo_erro}")
+
+
+# =========================
+# PREENCHIMENTO DO MODELO
+# =========================
+def montar_link_data(texto_data: str, url: str) -> str:
+    if not url:
+        return texto_data
+
+    texto_data = str(texto_data).replace('"', '""')
+    url = str(url).replace('"', '""')
+
+    return f'=HIPERLINK("{url}";"{texto_data}")'
+
+def montar_url_legislacao_mineira(tipo: str, numero, ano) -> str:
+    tipo_txt = str(tipo or "").strip().upper()
+    numero_txt = str(numero or "").strip().upper().replace(".", "")
+    ano_txt = str(ano or "").strip()
+
+    if not tipo_txt or not numero_txt or not ano_txt:
+        return ""
+
+    # Ex.: 3-A, 4-A, 10-B
+    m = re.match(r"^(\d+)\s*-\s*([A-Z])$", numero_txt)
+    if m:
+        numero_base = m.group(1)
+        complemento = m.group(2)
+
+        return (
+            f"https://www.almg.gov.br/legislacao-mineira/"
+            f"{tipo_txt}/{numero_base}/{ano_txt}/{complemento}"
+        )
+
+    return (
+        f"https://www.almg.gov.br/legislacao-mineira/"
+        f"{tipo_txt}/{numero_txt}/{ano_txt}/"
+    )
+
+
+def montar_link_numero_norma(tipo: str, numero, sancao: str, ano: str = "") -> str:
+    numero_txt = str(numero or "").strip()
+    tipo_txt = str(tipo or "").strip().upper()
+    ano_txt = str(ano or "").strip()
+
+    if not numero_txt or not tipo_txt:
+        return numero_txt
+
+    if not ano_txt:
+        m = re.search(r"(\d{4})$", str(sancao or "").strip())
+        if m:
+            ano_txt = m.group(1)
+
+    if not ano_txt:
+        return numero_txt
+
+    url = montar_url_legislacao_mineira(tipo_txt, numero_txt, ano_txt)
+
+    if not url:
+        return numero_txt
+
+    numero_txt_esc = numero_txt.replace('"', '""')
+    url_esc = url.replace('"', '""')
+
+    return f'=HIPERLINK("{url_esc}";"{numero_txt_esc}")'
+
+
+def montar_link_alteracao_norma(alteracao) -> str:
+    texto = str(alteracao or "").strip()
+
+    if not texto:
+        return ""
+
+    partes = texto.split()
+
+    if len(partes) < 3:
+        return texto
+
+    tipo_txt = partes[0].strip().upper()
+    numero_txt = partes[1].strip()
+    ano_txt = partes[2].strip()
+
+    if not tipo_txt or not numero_txt or not ano_txt:
+        return texto
+
+    url = montar_url_legislacao_mineira(tipo_txt, numero_txt, ano_txt)
+
+    if not url:
+        return texto
+
+    texto_esc = texto.replace('"', '""')
+    url_esc = url.replace('"', '""')
+
+    return f'=HIPERLINK("{url_esc}";"{texto_esc}")'
+
+
+def normalizar_numero_proposicao(numero) -> str:
+    numero_txt = str(numero or "").strip()
+    numero_txt = re.sub(r"\s+", "", numero_txt)
+    numero_txt = numero_txt.replace(".", "")
+    return numero_txt
+
+def montar_link_numero_proposicao(tipo: str, numero, ano) -> str:
+    numero_txt = str(numero).strip()
+    tipo_txt = str(tipo).strip().upper()
+    ano_txt = str(ano).strip()
+
+    if not numero_txt or not tipo_txt or not ano_txt:
+        return numero_txt
+
+    url = f"https://www.almg.gov.br/projetos-de-lei/{tipo_txt}/{numero_txt}/{ano_txt}/"
+    numero_txt_esc = numero_txt.replace('"', '""')
+    url_esc = url.replace('"', '""')
+
+    return f'=HIPERLINK("{url_esc}";"{numero_txt_esc}")'
+
+def montar_linhas_normas(
+    data_str: str,
+    df: pd.DataFrame,
+    url_diario: str = "",
+    preencher_vazio_com_traco: bool = False
+) -> list[list]:
+    link_data = montar_link_data(data_str, url_diario)
+
+    if df is None or df.empty:
+        if preencher_vazio_com_traco:
+            return [[link_data, "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"]]
+        return [[link_data, "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]]
+
+    df = df.fillna("")
+    linhas = []
+
+    for i, (_, r) in enumerate(df.iterrows()):
+        numero_link = montar_link_numero_norma(
+            tipo=r.get("Tipo", ""),
+            numero=r.get("Número", ""),
+            sancao=r.get("Sanção", ""),
+            ano=r.get("Ano", "")
+        )
+
+        alteracao = r.get("Alterações", "")
+        alteracao_link = montar_link_alteracao_norma(alteracao)
+
+        responsavel_exec = nome_planilha(r.get("ResponsavelExecucao", ""))
+        responsavel_rev = nome_planilha(r.get("ResponsavelRevisao", ""))
+
+        eh_continuacao = linha_continuacao_norma(r)
+        tem_alteracao = bool(str(alteracao).strip())
+
+        quantidade, vides = obter_quantidade_e_vides(alteracao)
+
+        if eh_continuacao:
+            linhas.append([
+                link_data if i == 0 else "",
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                "-",
+                quantidade,
+                alteracao_link,
+                vides,
+                responsavel_exec,
+                responsavel_rev,
+                "-",
+                "-",
+                r.get("Observação", "")
+            ])
+        else:
+            linhas.append([
+                link_data if i == 0 else "",
+                r.get("Página", ""),
+                r.get("Coluna", ""),
+                r.get("Sanção", ""),
+                r.get("Tipo", ""),
+                numero_link,
+                responsavel_exec,
+                responsavel_rev,
+                quantidade if tem_alteracao else "-",
+                alteracao_link if tem_alteracao else "-",
+                vides if tem_alteracao else "-",
+                responsavel_exec if tem_alteracao else "-",
+                responsavel_rev if tem_alteracao else "-",
+                responsavel_exec,
+                responsavel_rev,
+                r.get("Observação", "")
+            ])
+
+    return linhas
+
+
+def montar_linhas_proposicoes(
+    data_str: str,
+    df: pd.DataFrame,
+    url_diario: str = "",
+    preencher_vazio_com_traco: bool = False
+) -> list[list]:
+    link_data = montar_link_data(data_str, url_diario)
+
+    if df is None or df.empty:
+        if preencher_vazio_com_traco:
+            return [[link_data, "-", "-", "-", "-", "-", "-"]]
+        return [[link_data, "", "", "", "", "", ""]]
+
+    df = df.fillna("")
+    linhas = []
+
+    for i, (_, r) in enumerate(df.iterrows()):
+        numero_link = montar_link_numero_proposicao(
+            tipo=r.get("Tipo", ""),
+            numero=r.get("Número", ""),
+            ano=r.get("Ano", "")
+        )
+
+        responsavel_exec = nome_planilha(r.get("ResponsavelExecucao", ""))
+        responsavel_rev = nome_planilha(r.get("ResponsavelRevisao", ""))
+
+        observacao = r.get("Observação", r.get("Categoria", ""))
+        if nome_planilha(observacao) == "UP":
+            observacao = ""
+
+        linhas.append([
+            link_data if i == 0 else "",
+            r.get("Tipo", ""),
+            numero_link,
+            r.get("Ano", ""),
+            responsavel_exec,
+            responsavel_rev,
+            observacao
+        ])
+    return linhas
+
+
+def montar_linhas_requerimentos(
+    data_str: str,
+    df: pd.DataFrame,
+    url_diario: str = "",
+    preencher_vazio_com_traco: bool = False
+) -> list[list]:
+    link_data = montar_link_data(data_str, url_diario)
+
+    if df is None or df.empty:
+        if preencher_vazio_com_traco:
+            return [[link_data, "-", "-", "-", "-", "-", "-"]]
+        return [[link_data, "", "", "", "", "", ""]]
+
+    df = df.fillna("")
+    linhas = []
+
+    for i, (_, r) in enumerate(df.iterrows()):
+        numero_link = montar_link_numero_proposicao(
+            tipo=r.get("Tipo", ""),
+            numero=r.get("Número", ""),
+            ano=r.get("Ano", "")
+        )
+
+        responsavel_exec = nome_planilha(r.get("ResponsavelExecucao", ""))
+        responsavel_rev = nome_planilha(r.get("ResponsavelRevisao", ""))
+
+        linhas.append([
+            link_data if i == 0 else "",
+            r.get("Tipo", ""),
+            numero_link,
+            r.get("Ano", ""),
+            responsavel_exec,
+            responsavel_rev,
+            r.get("Observação", r.get("Classificação", ""))
+        ])
+
+    return linhas
+
+
+def montar_linhas_pareceres(
+    data_str: str,
+    df: pd.DataFrame,
+    url_diario: str = "",
+    preencher_vazio_com_traco: bool = False
+) -> list[list]:
+    link_data = montar_link_data(data_str, url_diario)
+
+    if df is None or df.empty:
+        if preencher_vazio_com_traco:
+            return [[link_data, "-", "-", "-", "-", "-", "-", "-"]]
+        return [[link_data, "", "", "", "", "", "", ""]]
+
+    df = df.fillna("")
+    linhas = []
+
+    for i, (_, r) in enumerate(df.iterrows()):
+        numero_link = montar_link_numero_proposicao(
+            tipo=r.get("Tipo", ""),
+            numero=r.get("Número", ""),
+            ano=r.get("Ano", "")
+        )
+
+        responsavel_exec = nome_planilha(r.get("ResponsavelExecucao", ""))
+        responsavel_rev = nome_planilha(r.get("ResponsavelRevisao", ""))
+
+        linhas.append([
+            link_data if i == 0 else "",
+            r.get("Tipo", ""),
+            numero_link,
+            r.get("Ano", ""),
+            r.get("Subtipo", ""),
+            responsavel_exec,
+            responsavel_rev,
+            r.get("Observação", "")
+        ])
+    return linhas
+
+def distribuir_em_blocos(qtd: int, pessoas: list[str]) -> list[str]:
+    pessoas = [nome_planilha(p) for p in pessoas if str(p).strip()]
+    if qtd <= 0:
+        return []
+    if not pessoas:
+        return [""] * qtd
+
+    base, resto = divmod(qtd, len(pessoas))
+    resultado = []
+
+    for i, pessoa in enumerate(pessoas):
+        repetir = base + (1 if i < resto else 0)
+        resultado.extend([pessoa] * repetir)
+
+    return resultado
+
+
+def atribuir_responsaveis_normas(
+    df: pd.DataFrame,
+    indisponiveis: set[str] | None = None,
+    replicar_em_linhas_continuacao: bool = True,
+    distribuidor_global: DistribuidorCargaGlobal | None = None,
+) -> pd.DataFrame:
+    df = inicializar_df_responsaveis(df)
+    if df.empty:
+        return df
+
+    distribuidor_global = distribuidor_global or DistribuidorCargaGlobal()
+
+    cand_exec_dne = candidatos_para_tarefa("implantacao_normas_dne", indisponiveis)
+    cand_exec_nao_dne = candidatos_para_tarefa("implantacao_normas_nao_dne", indisponiveis)
+    cand_rev = candidatos_para_tarefa("revisao_normas", indisponiveis)
+
+    execucoes = []
+    revisoes = []
+    ultimo_exec = ""
+    ultimo_rev = ""
+
+    for _, r in df.iterrows():
+        cont = replicar_em_linhas_continuacao and linha_continuacao_norma(r)
+
+        if cont:
+            execucoes.append(ultimo_exec)
+            revisoes.append(ultimo_rev)
+            continue
+
+        if eh_norma_dne(r):
+            candidatos_exec = cand_exec_dne
+        else:
+            candidatos_exec = cand_exec_nao_dne
+
+        ultimo_exec = distribuidor_global.proximo_executor(candidatos_exec)
+        ultimo_rev = distribuidor_global.proximo_revisor(
+            cand_rev,
+            executor=ultimo_exec,
+        )
+
+        execucoes.append(ultimo_exec)
+        revisoes.append(ultimo_rev)
+
+    df["ResponsavelExecucao"] = execucoes
+    df["ResponsavelRevisao"] = revisoes
+    return df
+
+
+def atribuir_responsaveis_proposicoes(
+    df: pd.DataFrame,
+    indisponiveis: set[str] | None = None,
+    distribuidor_global: DistribuidorCargaGlobal | None = None,
+) -> pd.DataFrame:
+    df = inicializar_df_responsaveis(df)
+    if df.empty:
+        return df
+
+    distribuidor_global = distribuidor_global or DistribuidorCargaGlobal()
+
+    cand_exec_up = candidatos_para_tarefa("execucao_proposicoes_up", indisponiveis)
+    cand_exec_nao_up = candidatos_para_tarefa("execucao_proposicoes_nao_up", indisponiveis)
+    cand_rev = candidatos_para_tarefa("revisao_proposicoes", indisponiveis)
+
+    execucoes = []
+    revisoes = []
+
+    for _, r in df.iterrows():
+        if eh_proposicao_up(r):
+            candidatos_exec = cand_exec_up
+        else:
+            candidatos_exec = cand_exec_nao_up
+
+        executor = distribuidor_global.proximo_executor(candidatos_exec)
+        revisor = distribuidor_global.proximo_revisor(
+            cand_rev,
+            executor=executor,
+        )
+
+        execucoes.append(executor)
+        revisoes.append(revisor)
+
+    df["ResponsavelExecucao"] = execucoes
+    df["ResponsavelRevisao"] = revisoes
+    return df
+
+
+def atribuir_responsaveis_requerimentos(
+    df: pd.DataFrame,
+    indisponiveis: set[str] | None = None,
+    distribuidor_global: DistribuidorCargaGlobal | None = None,
+) -> pd.DataFrame:
+    df = inicializar_df_responsaveis(df)
+    if df.empty:
+        return df
+
+    distribuidor_global = distribuidor_global or DistribuidorCargaGlobal()
+
+    cand_exec = candidatos_para_tarefa("execucao_requerimentos", indisponiveis)
+    cand_rev = candidatos_para_tarefa("revisao_requerimentos", indisponiveis)
+
+    execucoes = []
+    revisoes = []
+
+    for _, r in df.iterrows():
+        if requerimento_sem_tratamento(r):
+            execucoes.append("-")
+            revisoes.append("-")
+            continue
+
+        executor = distribuidor_global.proximo_executor(cand_exec)
+
+        if pessoa_pertence_ao_grupo(executor, "BIBLIOTECARIO"):
+            revisor = "-"
+        else:
+            revisor = distribuidor_global.proximo_revisor(
+                cand_rev,
+                executor=executor,
+            )
+
+        execucoes.append(executor)
+        revisoes.append(revisor)
+
+    df["ResponsavelExecucao"] = execucoes
+    df["ResponsavelRevisao"] = revisoes
+    return df
+
+
+def atribuir_responsaveis_pareceres(
+    df: pd.DataFrame,
+    indisponiveis: set[str] | None = None,
+    distribuidor_global: DistribuidorCargaGlobal | None = None,
+) -> pd.DataFrame:
+    df = inicializar_df_responsaveis(df)
+    if df.empty:
+        return df
+
+    distribuidor_global = distribuidor_global or DistribuidorCargaGlobal()
+
+    cand_exec = candidatos_para_tarefa("execucao_pareceres", indisponiveis)
+    cand_rev = candidatos_para_tarefa("revisao_pareceres", indisponiveis)
+
+    execucoes = []
+    revisoes = []
+
+    for _ in range(len(df)):
+        executor = distribuidor_global.proximo_executor(cand_exec)
+        revisor = distribuidor_global.proximo_revisor(
+            cand_rev,
+            executor=executor,
+        )
+
+        execucoes.append(executor)
+        revisoes.append(revisor)
+
+    df["ResponsavelExecucao"] = execucoes
+    df["ResponsavelRevisao"] = revisoes
+    return df
+
+def preencher_aba_modelo(
+    ws,
+    data_str: str,
+    urls: dict,
+    df_exec: pd.DataFrame,
+    df_adm: pd.DataFrame,
+    df_leg_normas: pd.DataFrame,
+    df_props: pd.DataFrame,
+    df_reqs: pd.DataFrame,
+    df_pareceres: pd.DataFrame
+):
+    # ================= PROPOSIÇÕES =================
+    linha_props = encontrar_linha(ws, "PROPOSIÇÕES", 1) + 1
+    linhas_props = montar_linhas_proposicoes(
+        data_str, df_props, urls["legislativo"], preencher_vazio_com_traco=True
+    )
+    desmesclar_intervalo(ws, linha_props, len(linhas_props), 7, 15)
+    escrever_bloco(ws, linha_props, linhas_props, mesclar_coluna_a=True)
+    mesclar_linhas_intervalo(ws, linha_props, len(linhas_props), 7, 15)
+    aplicar_cor_responsaveis(ws, linha_props, linhas_props, colunas=(5, 6))
+
+    # ================= REQUERIMENTOS =================
+    linha_reqs = encontrar_linha(ws, "REQUERIMENTOS", 1) + 1
+    linhas_reqs = montar_linhas_requerimentos(
+        data_str, df_reqs, urls["legislativo"], preencher_vazio_com_traco=True
+    )
+    desmesclar_intervalo(ws, linha_reqs, len(linhas_reqs), 7, 15)
+    escrever_bloco(ws, linha_reqs, linhas_reqs, mesclar_coluna_a=True)
+    mesclar_linhas_intervalo(ws, linha_reqs, len(linhas_reqs), 7, 15)
+    aplicar_cor_responsaveis(ws, linha_reqs, linhas_reqs, colunas=(5, 6))
+
+    # ================= PARECERES =================
+    linha_pareceres = encontrar_linha(ws, "PARECERES", 1) + 1
+    linhas_pareceres = montar_linhas_pareceres(
+        data_str, df_pareceres, urls["legislativo"], preencher_vazio_com_traco=True
+    )
+    desmesclar_intervalo(ws, linha_pareceres, len(linhas_pareceres), 8, 15)
+    escrever_bloco(ws, linha_pareceres, linhas_pareceres, mesclar_coluna_a=True)
+    mesclar_linhas_intervalo(ws, linha_pareceres, len(linhas_pareceres), 8, 15)
+    aplicar_cor_responsaveis(ws, linha_pareceres, linhas_pareceres, colunas=(6, 7))
+
+    # ================= NORMAS - LEGISLATIVO =================
+    linha_leg = encontrar_linha(ws, "DIÁRIO DO LEGISLATIVO", 1) + 1
+    linhas_leg = montar_linhas_normas(
+        data_str,
+        df_leg_normas,
+        urls["legislativo"],
+        preencher_vazio_com_traco=True
+    )
+    escrever_bloco(ws, linha_leg, linhas_leg, mesclar_coluna_a=True)
+    aplicar_cor_responsaveis(ws, linha_leg, linhas_leg, colunas=(7, 8, 12, 13, 14, 15))
+
+    # ================= NORMAS - ADMINISTRATIVO =================
+    linha_adm = encontrar_linha(ws, "DIÁRIO ADMINISTRATIVO", 1) + 1
+    linhas_adm = montar_linhas_normas(
+        data_str, df_adm, urls["administrativo"], preencher_vazio_com_traco=True
+    )
+    escrever_bloco(ws, linha_adm, linhas_adm, mesclar_coluna_a=True)
+    aplicar_cor_responsaveis(ws, linha_adm, linhas_adm, colunas=(7, 8, 12, 13, 14, 15))
+
+    # ================= NORMAS - DIÁRIO DA JUSTIÇA =================
+    linha_dj = encontrar_linha(ws, "DIÁRIO DA JUSTIÇA", 1) + 1
+    linhas_dj = montar_linhas_normas(data_str, pd.DataFrame(), "")
+    escrever_bloco(ws, linha_dj, linhas_dj, mesclar_coluna_a=True)
+    aplicar_cor_responsaveis(ws, linha_dj, linhas_dj, colunas=(7, 8, 12, 13, 14, 15))
+
+    # ================= NORMAS - EXECUTIVO =================
+    linha_exec = encontrar_linha(ws, "DIÁRIO DO EXECUTIVO", 1) + 1
+    linhas_exec = montar_linhas_normas(data_str, df_exec, urls["executivo_html"])
+    escrever_bloco(ws, linha_exec, linhas_exec, mesclar_coluna_a=True)
+    aplicar_cor_responsaveis(ws, linha_exec, linhas_exec, colunas=(7, 8, 12, 13, 14, 15))
+
+    # ================= TOTAIS =================
+    total_1 = encontrar_linha_safe(ws, "TOTAL", 1)
+    total_2 = encontrar_linha_safe(ws, "TOTAL", 2)
+    total_3 = encontrar_linha_safe(ws, "TOTAL", 3)
+    total_4 = encontrar_linha_safe(ws, "TOTAL", 4)
+    total_5 = encontrar_linha_safe(ws, "TOTAL", 5)
+
+    total_normas = (
+        contar_normas_principais(df_exec) +
+        contar_normas_principais(df_adm) +
+        contar_normas_principais(df_leg_normas)
+    )
+
+    qtd_exec, vides_exec = somar_quantidade_vides(df_exec)
+    qtd_adm, vides_adm = somar_quantidade_vides(df_adm)
+    qtd_leg, vides_leg = somar_quantidade_vides(df_leg_normas)
+
+    total_quantidade = qtd_exec + qtd_adm + qtd_leg
+    total_vides = vides_exec + vides_adm + vides_leg
+
+    if total_1:
+        escrever_celula(ws, f"F{total_1}", total_normas)
+        escrever_celula(ws, f"I{total_1}", total_quantidade)
+        escrever_celula(ws, f"K{total_1}", total_vides)
+
+    if total_2:
+        escrever_celula(ws, f"C{total_2}", len(df_props))
+
+    if total_3:
+        escrever_celula(ws, f"C{total_3}", len(df_reqs))
+
+    if total_4:
+        escrever_celula(ws, f"C{total_4}", len(df_pareceres))
+
+    if total_5:
+        escrever_celula(ws, f"C{total_5}", 0)
+
+
+# =========================
+# CLASS LegislativeProcessor
+# =========================
+class LegislativeProcessor:
+    def __init__(self, pdf_bytes: bytes):
+        self.pdf_bytes = pdf_bytes
+
+        reader = pypdf.PdfReader(io.BytesIO(self.pdf_bytes))
+        page_texts = []
+        for page in reader.pages:
+            pt = page.extract_text() or ""
+            pt = re.sub(r"[ \t]+", " ", pt)
+            page_texts.append(pt)
+
+        self._offsets = []
+        parts = []
+        cursor = 0
+
+        for idx, pt in enumerate(page_texts, start=1):
+            chunk = pt + "\n"
+            start = cursor
+            end = cursor + len(chunk)
+            self._offsets.append((start, end, idx))
+            parts.append(chunk)
+            cursor = end
+
+        self.text = "".join(parts)
+
+        self.text = re.sub(
+            r"(\d{1,5}(?:\.\d{1,3})?)\s*/\s*(\d{4})",
+            r"\1/\2",
+            self.text
+        )
+
+    def _pagina_from_pos(self, pos: int) -> str:
+        for start, end, pnum in self._offsets:
+            if start <= pos < end:
+                return str(pnum)
+        return ""
+
+    def process_normas(self) -> pd.DataFrame:
+        pattern = re.compile(
+            r"^(LEI COMPLEMENTAR|LEI|RESOLUÇÃO|EMENDA À CONSTITUIÇÃO|DELIBERAÇÃO DA MESA)\s+N[º°]?\s*(\d{1,5}(?:\.\d{0,3})?)(?:/(\d{4}))?(?:,\s*DE .+? DE (\d{4}))?$",
+            re.MULTILINE | re.IGNORECASE
+        )
+
+        data_na_epigrafe_regex = re.compile(
+            r"\bDE\s+(\d{1,2})\s+DE\s+([A-ZÇÃÁÉÍÓÔÚ]+)\s+DE\s+(\d{4})\b",
+            re.IGNORECASE
+        )
+
+        meses_leg = {
+            "JANEIRO": "01",
+            "FEVEREIRO": "02",
+            "MARÇO": "03",
+            "MARCO": "03",
+            "ABRIL": "04",
+            "MAIO": "05",
+            "JUNHO": "06",
+            "JULHO": "07",
+            "AGOSTO": "08",
+            "SETEMBRO": "09",
+            "OUTUBRO": "10",
+            "NOVEMBRO": "11",
+            "DEZEMBRO": "12"
+        }
+
+        comandos_regex = re.compile(
+            r"(Ficam\s+revogados|Fica\s+revogado|"
+            r"Fica\s+acrescentado|Ficam\s+acrescentados|"
+            r"Fica\s+alterado|Ficam\s+alterados|"
+            r"Altera|Alteram|"
+            r"Revoga|Revogam|"
+            r"Dá\s+nova\s+redação|Dão\s+nova\s+redação|"
+            r"Passa\s+a\s+vigorar|Passam\s+a\s+vigorar)",
+            re.IGNORECASE
+        )
+
+        norma_alterada_regex = re.compile(
+            r"(LEI COMPLEMENTAR|LEI|RESOLUÇÃO|EMENDA À CONSTITUIÇÃO|DELIBERAÇÃO DA MESA)\s+"
+            r"N[º°]?\s*(\d{1,5}(?:\.\d{0,3})?)"
+            r"(?:\s*/\s*(\d{4}))?"
+            r"(?:,\s*de\s*.*?(\d{4}))?",
+            re.IGNORECASE
+        )
+
+        # NOVO: fecho real da norma
+        # Corta leis no fecho do Palácio e DLBs no fecho da Mesa.
+        fecho_norma_regex = re.compile(
+            r"(?:"
+            r"Palácio\s+da\s+Inconfidência.*?Independência\s+do\s+Brasil\.?|"
+            r"Sala\s+de\s+Reuniões\s+da\s+Mesa\s+da\s+Assembleia(?:\s+Legislativa)?\s*,\s*"
+            r"\d{1,2}\s+de\s+[A-Za-zçÇãÃáÁéÉíÍóÓôÔúÚ]+(?:\s+de)?\s+\d{4}\.?"
+            r")",
+            re.IGNORECASE | re.DOTALL
+        )
+
+        normas_encontradas = []
+        for match in pattern.finditer(self.text):
+            tipo_extenso = match.group(1).upper().strip()
+            numero_raw = match.group(2).replace(".", "")
+            ano = match.group(3) if match.group(3) else match.group(4)
+            if not ano:
+                continue
+
+            pagina = self._pagina_from_pos(match.start())
+            coluna = 1
+
+            sancao = ""
+            linha_epigrafe = match.group(0) or ""
+            dm = data_na_epigrafe_regex.search(linha_epigrafe)
+            if dm:
+                dia = (dm.group(1) or "").zfill(2)
+                mes_nome = (dm.group(2) or "").upper().strip()
+                mes = meses_leg.get(mes_nome, "")
+                ano_data = (dm.group(3) or "").strip()
+                if mes:
+                    sancao = f"{dia}/{mes}/{ano_data}"
+
+            sigla = TIPO_MAP_NORMA[tipo_extenso]
+
+            normas_encontradas.append({
+                "start": match.start(),
+                "end": match.end(),
+                "Página": pagina,
+                "Coluna": coluna,
+                "Sanção": sancao,
+                "Sigla": sigla,
+                "Número": numero_raw,
+                "Ano": ano
+            })
+
+        resultados = []
+
+        for i, norma in enumerate(normas_encontradas):
+            start_bloco = norma["end"]
+            end_bloco = normas_encontradas[i + 1]["start"] if i + 1 < len(normas_encontradas) else len(self.text)
+            bloco = self.text[start_bloco:end_bloco]
+
+            # NOVO: corta no fecho da lei
+            m_fecho = fecho_norma_regex.search(bloco)
+            if m_fecho:
+                bloco = bloco[:m_fecho.end()]
+
+            linha = {
+                "Página": norma["Página"],
+                "Coluna": norma["Coluna"],
+                "Sanção": norma["Sanção"],
+                "Sigla": norma["Sigla"],
+                "Número": norma["Número"],
+                "Ano": norma["Ano"],
+                "Alterações": "",
+            }
+    
+            resultados.append(linha)
+
+            seen_alteracoes = set()
+
+            def add_alteracao(chave: str):
+                if not chave or chave in seen_alteracoes:
+                    return
+                seen_alteracoes.add(chave)
+
+                if linha["Alterações"] == "":
+                    linha["Alterações"] = chave
+                else:
+                    resultados.append({
+                        "Página": "",
+                        "Coluna": "",
+                        "Sanção": "",
+                        "Sigla": "",
+                        "Número": "",
+                        "Ano": "",
+                        "Alterações": chave
+                    })
+
+            if linha["Sigla"] == "EMC":
+                add_alteracao("CON 1989 1989")
+
+            eventos = []
+            for c in comandos_regex.finditer(bloco):
+                eventos.append(("command", c.start(), c))
+
+            eventos.sort(key=lambda e: e[1])
+
+            for ev in eventos:
+                tipo_ev, pos_ev, match_obj = ev
+                command_text = match_obj.group(0).lower()
+
+                if tipo_ev != "command":
+                    continue
+
+                raio = 300
+                start_block = max(0, pos_ev - raio)
+                end_block = min(len(bloco), pos_ev + raio)
+                bloco_janela = bloco[start_block:end_block]
+
+                alteracoes_para_processar = []
+
+                if "revoga" in command_text or "revogado" in command_text:
+                    trecho = bloco[pos_ev:]
+
+                    deslocamento_inicio_busca = match_obj.end() - pos_ev
+
+                    # corta no próximo artigo, para não invadir Art. 19, Art. 20 etc.
+                    m_fim = re.search(
+                        r"\n\s*Art\.\s*\d+º?\s*[–—-]",
+                        trecho[deslocamento_inicio_busca:],
+                        re.IGNORECASE
+                    )
+
+                    if m_fim:
+                        fim = deslocamento_inicio_busca + m_fim.start()
+                        bloco_revogacao = trecho[:fim]
+                    else:
+                        bloco_revogacao = trecho[:1500]
+
+                    alteracoes_para_processar = list(
+                        norma_alterada_regex.finditer(bloco_revogacao)
+                    )
+
+                else:
+                    alteracoes_candidatas = list(
+                        norma_alterada_regex.finditer(bloco_janela)
+                    )
+
+                    if alteracoes_candidatas:
+                        pos_comando_no_bloco = pos_ev - start_block
+                        melhor_candidato = min(
+                            alteracoes_candidatas,
+                            key=lambda m: abs(m.start() - pos_comando_no_bloco)
+                        )
+                        alteracoes_para_processar = [melhor_candidato]
+
+                for alt in alteracoes_para_processar:
+                    tipo_alt_extenso = alt.group(1).upper().strip()
+                    num_alt = alt.group(2).replace(".", "")
+                    ano_alt = alt.group(3) or alt.group(4) or ""
+
+                    sigla_alt = TIPO_MAP_NORMA.get(tipo_alt_extenso, tipo_alt_extenso)
+
+                    if (
+                        sigla_alt == linha["Sigla"]
+                        and num_alt == linha["Número"]
+                        and ((not ano_alt) or ano_alt == linha["Ano"])
+                    ):
+                        continue
+
+                    chave = f"{sigla_alt} {num_alt}"
+                    if ano_alt:
+                        chave += f" {ano_alt}"
+
+                    if chave in seen_alteracoes:
+                        continue
+
+                    add_alteracao(chave)
+
+        return pd.DataFrame(
+            resultados,
+            columns=["Página", "Coluna", "Sanção", "Sigla", "Número", "Ano", "Alterações", "Observação"]
+        )
+
+    def process_proposicoes(self) -> pd.DataFrame:
+        tipos_prop_regex = "|".join(
+            re.escape(tipo)
+            for tipo in sorted(TIPO_MAP_PROP, key=len, reverse=True)
+        )
+
+        pattern_prop = re.compile(
+            rf"^\s*(?:-\s*)?({tipos_prop_regex})\s+N[º°]\s*"
+            rf"(\d{{1,5}}(?:\.\d{{3}})?/\d{{4}})",
+            re.MULTILINE
+        )
+        pattern_utilidade = re.compile(r"Declara de utilidade pública", re.IGNORECASE | re.DOTALL)
+        ignore_redacao_final = re.compile(r"opinamos por se dar à proposição a seguinte redação final", re.IGNORECASE)
+        ignore_publicada_antes = re.compile(r"foi publicad[ao] na edição anterior\.", re.IGNORECASE)
+        ignore_em_epigrafe = re.compile(r"Na publicação da matéria em epígrafe", re.IGNORECASE)
+
+        proposicoes = []
+        for match in pattern_prop.finditer(self.text):
+            start_idx = match.start()
+            end_idx = match.end()
+            contexto_antes = self.text[max(0, start_idx - 200):start_idx]
+            contexto_depois = self.text[end_idx:end_idx + 250]
+
+            if ignore_em_epigrafe.search(contexto_depois):
+                continue
+            if ignore_redacao_final.search(contexto_antes) or ignore_publicada_antes.search(contexto_depois):
+                continue
+
+            subseq_text = self.text[end_idx:end_idx + 250]
+            if "(Redação do Vencido)" in subseq_text:
+                continue
+
+            tipo_extenso = match.group(1)
+            numero_ano = match.group(2).replace(".", "")
+            numero, ano = numero_ano.split("/")
+            sigla = TIPO_MAP_PROP[tipo_extenso]
+            categoria = "UP" if pattern_utilidade.search(subseq_text) else ""
+            proposicoes.append([sigla, numero, ano, categoria])
+
+        return pd.DataFrame(proposicoes, columns=["Sigla", "Número", "Ano", "Categoria"])
+
+    def process_requerimentos(self) -> pd.DataFrame:
+        requerimentos = []
+
+        ignore_officio_pattern = re.compile(
+            r"Ofício[\s\S]{0,200}?Requerimento\s*n[ºo]?\s*(\d{1,5}(?:\.\d{0,3})?)/(\d{4})",
+            re.IGNORECASE
+        )
+
+        ignore_anexese_pattern = re.compile(
+            r"Anexe-se\s+ao\s+Requerimento\s*n[ºo]?\s*(\d{1,5}(?:\.\d{0,3})?)/(\d{4})",
+            re.IGNORECASE
+        )
+
+        ignore_relativas_pattern = re.compile(
+            r"(?:relativa[s]?|referente[s]?|informações\s+relativas\s+ao)"
+            r"[\s\S]{0,80}?Requerimento\s*n[ºo]?\s*(\d{1,5}(?:\.\d{0,3})?)/(\d{4})",
+            re.IGNORECASE
+        )
+
+        reqs_to_ignore = set()
+
+        for match in ignore_officio_pattern.finditer(self.text):
+            num_part = match.group(1).replace(".", "")
+            ano = match.group(2)
+            reqs_to_ignore.add(f"{num_part}/{ano}")
+
+        for match in ignore_anexese_pattern.finditer(self.text):
+            num_part = match.group(1).replace(".", "")
+            ano = match.group(2)
+            reqs_to_ignore.add(f"{num_part}/{ano}")
+
+        for match in ignore_relativas_pattern.finditer(self.text):
+            num_part = match.group(1).replace(".", "")
+            ano = match.group(2)
+            reqs_to_ignore.add(f"{num_part}/{ano}")
+
+        ignore_pattern = re.compile(
+            r"Of[ií]cio\s+n[º°o]?\s*[\s\S]{0,800}?relativas\s+ao\s+"
+            r"Requerimento\s*n[º°o]?\s*(\d{1,5}(?:\.\d{0,3})?/\d{4})",
+            re.IGNORECASE
+        )
+        aprovado_pattern = re.compile(
+            r"da\s+Comiss[aã]o[\s\S]{0,500}?informando\s+que,\s+na[\s\S]{0,500}?"
+            r"foi\s+aprovado\s+o\s+Requerimento\s*n[º°o]?\s*"
+            r"(\d{1,5}(?:\.\d{0,3})?)/(\d{4})",
+            re.IGNORECASE
+        )
+
+        for match in ignore_pattern.finditer(self.text):
+            numero_ano = match.group(1).replace(".", "")
+            reqs_to_ignore.add(numero_ano)
+
+        for match in aprovado_pattern.finditer(self.text):
+            num_part = match.group(1).replace(".", "")
+            ano = match.group(2)
+            numero_ano = f"{num_part}/{ano}"
+            reqs_to_ignore.add(numero_ano)
+
+        req_recebimento_pattern = re.compile(
+            r"RECEBIMENTO DE PROPOSIÇÃO[\s\S]*?REQUERIMENTO Nº (\d{1,5}(?:\.\d{0,3})?)/(\d{4})",
+            re.IGNORECASE | re.DOTALL
+        )
+        for match in req_recebimento_pattern.finditer(self.text):
+            trecho_match = match.group(0)
+
+            if re.search(r"PARECER\s+SOBRE\s+O\s+REQUERIMENTO", trecho_match, re.IGNORECASE):
+                continue
+
+            num_part = match.group(1).replace(".", "")
+            ano = match.group(2)
+            numero_ano = f"{num_part}/{ano}"
+            if numero_ano not in reqs_to_ignore:
+                requerimentos.append(["RQN", num_part, ano, "", "", "Recebido"])
+
+        NUM_REQ = r"(?:\d{1,2}\.?\d{3}|\d{1,5})"
+
+        fim_contexto_req_pattern = re.compile(
+            r"^\s*(?:"
+            r"Cumprida\s+a\s+finalidade|"
+            r"Sala\s+das\s+Comissões|"
+            r"Passa-se\s+[àa]|"
+            r"ATA\s+DA|"
+            r"ORDENS\s+DO\s+DIA|"
+            r"EDITAIS?\s+DE\s+CONVOCAÇÃO|"
+            r"TRAMITAÇÃO\s+DE\s+PROPOSIÇÕES|"
+            r"COMUNICAÇÕES|"
+            r"MANIFESTAÇÕES|"
+            r"REQUERIMENTOS\s+APROVADOS"
+            r")\b",
+            re.IGNORECASE | re.MULTILINE
+        )
+
+        def recortar_fim_contexto_requerimento(block: str) -> str:
+            m_fim = fim_contexto_req_pattern.search(block or "")
+            if m_fim:
+                return block[:m_fim.start()].strip()
+            return (block or "").strip()
+
+        def recortar_trecho_match_requerimento(texto: str, start_idx: int, limite: int = 1500) -> str:
+            trecho = texto[start_idx:start_idx + limite]
+            trecho = recortar_fim_contexto_requerimento(trecho)
+
+            # Se houver outro requerimento numerado logo depois, não deixa a classificação invadir o próximo.
+            m_proximo = re.search(
+                rf"\n\s*(?:Nº|nº)\s+{NUM_REQ}/\d{{4}}\s*,",
+                trecho,
+                flags=re.IGNORECASE
+            )
+
+            if m_proximo:
+                trecho = trecho[:m_proximo.start()]
+
+            return trecho.strip()
+        
+        rqc_pattern_aprovado = re.compile(
+            r"É\s+recebido\s+pela\s+presidência,\s+submetido\s+a\s+votação\s+e\s+aprovado\s+o\s+"
+            r"Requerimento(?:s)?(?:\s+em\s+Comiss[aã]o)?(?:\s+n[º°o]|\s+N[º°O])?\s*"
+            rf"({NUM_REQ})/\s*(\d{{4}})",
+            re.IGNORECASE
+        )
+
+        for match in rqc_pattern_aprovado.finditer(self.text):
+            num_part = match.group(1).replace(".", "")
+            ano = match.group(2)
+            numero_ano = f"{num_part}/{ano}"
+
+            if numero_ano not in reqs_to_ignore:
+                trecho_req = recortar_trecho_match_requerimento(self.text, match.start())
+                classif = classify_req(trecho_req)
+                requerimentos.append(["RQC", num_part, ano, "", "", classif])
+
+        rqc_recebido_apreciacao_pattern = re.compile(
+            r"É\s+recebido\s+pela\s+presidência,\s+para\s+posterior\s+apreciação,\s+o\s+"
+            r"Requerimento(?:s)?(?:\s+em\s+Comiss[aã]o)?(?:\s+n[º°o]|\s+N[º°O])?\s*"
+            r"(\d{1,5}(?:\.\d{0,3})?)/(\d{4})",
+            re.IGNORECASE | re.DOTALL
+        )
+        for match in rqc_recebido_apreciacao_pattern.finditer(self.text):
+            num_part = match.group(1).replace(".", "")
+            ano = match.group(2)
+            numero_ano = f"{num_part}/{ano}"
+            if numero_ano not in reqs_to_ignore:
+                requerimentos.append(["RQC", num_part, ano, "", "", "Recebido para apreciação"])
+
+        rqc_prejudicado_pattern = re.compile(
+            r"(?:é|foi|fica|considera(?:-se)?)(?:[\s\S]{0,80}?)prejudicado\s+o\s+"
+            r"Requerimento(?:s)?(?:\s+em\s+Comiss[aã]o)?(?:\s+n[º°o]|\s+N[º°O])?\s*"
+            r"(\d{1,5}(?:\.\d{0,3})?)/\s*(\d{4})",
+            re.IGNORECASE
+        )
+        for match in rqc_prejudicado_pattern.finditer(self.text):
+            num_part = match.group(1).replace(".", "")
+            ano = match.group(2)
+            numero_ano = f"{num_part}/{ano}"
+            if numero_ano not in reqs_to_ignore:
+                requerimentos.append(["RQC", num_part, ano, "", "", "Prejudicado"])
+
+        rqc_rejeitado_pattern = re.compile(
+            r"É\s+recebido\s+pela\s+presidência,\s+submetido\s+a\s+votação\s+e\s+rejeitado\s+o\s+"
+            r"Requerimento(?:s)?(?:\s+em\s+Comiss[aã]o)?(?:\s+n[º°o]|\s+N[º°O])?\s*"
+            r"(\d{1,5}(?:\.\d{0,3})?)/\s*(\d{4})",
+            re.IGNORECASE | re.DOTALL
+        )
+        for match in rqc_rejeitado_pattern.finditer(self.text):
+            num_part = match.group(1).replace(".", "")
+            ano = match.group(2)
+            numero_ano = f"{num_part}/{ano}"
+            if numero_ano not in reqs_to_ignore:
+                requerimentos.append(["RQC", num_part, ano, "", "", "Rejeitado"])
+
+        def bloco_parece_requerimento_real(block: str) -> bool:
+            b = re.sub(r"\s+", " ", block).strip().lower()
+
+            indicadores = [
+                "em que requer",
+                "requer seja",
+                "requerem seja",
+                "que seja formulado voto de congratulações",
+                "manifestação de pesar",
+                "manifestação de repúdio",
+                "moção de aplauso",
+                "manifestação de apoio",
+            ]
+
+            return any(ind in b for ind in indicadores)
+
+
+        def fecha_parentese_logo_depois(texto: str, start_idx: int, lookahead: int = 80) -> bool:
+            depois = texto[start_idx:start_idx + lookahead]
+            return ")" in depois
+
+        NUM_REQ = r"(?:\d{1,2}\.?\d{3}|\d{1,5})"
+        rqn_pattern = re.compile(
+            rf"^(?:\s*)(Nº)\s+({NUM_REQ}/\d{{4}})\s*,\s*d[ao]s?\b",
+            re.MULTILINE
+            )
+        rqc_old_pattern = re.compile(
+            rf"^(?:\s*)(nº)\s+({NUM_REQ}/\d{{4}})\s*,\s*(?:d[ao]s?\b|em\s+que\s+requer(?:em)?\b)",
+            re.MULTILINE
+        )
+
+        def eh_citacao_de_parecer_sobre_requerimento(texto: str, start_idx: int) -> bool:
+            antes = re.sub(
+                r"\s+",
+                " ",
+                texto[max(0, start_idx - 120):start_idx]
+            ).strip().lower()
+
+            depois = re.sub(
+                r"\s+",
+                " ",
+                texto[start_idx:start_idx + 250]
+            ).strip().lower()
+
+            return bool(
+                re.search(r"\bdo\s+requerimento\s*$", antes)
+                and re.search(
+                    r"^n[ºo]?\s*\d{1,5}(?:\.\d{1,3})?/\d{4}\s*,\s*"
+                    r"d[ao]s?\s+comiss[aã]o"
+                    r".{0,200}\bpela\s+aprova[cç][aã]o\b",
+                    depois,
+                    flags=re.IGNORECASE
+                )
+            )
+
+        def eh_contexto_de_correspondencia(texto: str, start_idx: int, numero_ano_atual: str = "") -> bool:
+            janela = texto[max(0, start_idx - 250): start_idx + 180]
+            janela_norm = re.sub(r"\s+", " ", janela).strip().lower()
+
+            padroes = [
+                r"\bof[ií]cio\b.{0,220}\bprestando informa[cç][oõ]es relativas ao requerimento\b",
+                r"\bprestando informa[cç][oõ]es relativas ao requerimento\b",
+                r"\banexe-se ao requerimento\b",
+                r"\brelativas ao requerimento\b",
+                r"\breferentes ao requerimento\b",
+            ]
+
+            tem_contexto = any(re.search(p, janela_norm, re.IGNORECASE) for p in padroes)
+            if not tem_contexto:
+                return False
+
+            referencias = set()
+            for ref in re.finditer(
+                r"requerimento\s*n[º°o]?\s*(\d{1,5}(?:\.\d{0,3})?)/(\d{4})",
+                janela,
+                flags=re.IGNORECASE,
+            ):
+                referencias.add(f"{ref.group(1).replace('.', '')}/{ref.group(2)}")
+
+            if numero_ano_atual and referencias:
+                return numero_ano_atual in referencias
+
+            return True
+
+        matches_genericos = []
+        for pattern, sigla_prefix in [(rqn_pattern, "RQN"), (rqc_old_pattern, "RQC")]:
+            for match in pattern.finditer(self.text):
+                matches_genericos.append((match.start(), match, sigla_prefix))
+
+        matches_genericos.sort(key=lambda item: item[0])
+
+        for idx_match, (start_idx, match, sigla_prefix) in enumerate(matches_genericos):
+            numero_ano_atual = match.group(2).replace(".", "")
+
+            if eh_contexto_de_correspondencia(self.text, start_idx, numero_ano_atual):
+                continue
+
+            if eh_citacao_de_parecer_sobre_requerimento(self.text, start_idx):
+                continue
+
+            # ignora citações do tipo:
+            # nº 16.969/2026, da Comissão dos Direitos da Mulher).
+            if fecha_parentese_logo_depois(self.text, start_idx, lookahead=80):
+                continue
+
+            end_idx = (
+                matches_genericos[idx_match + 1][0]
+                if idx_match + 1 < len(matches_genericos)
+                else len(self.text)
+            )
+
+            block = recortar_fim_contexto_requerimento(self.text[start_idx:end_idx])
+            nums_in_block = re.findall(rf"{NUM_REQ}/\d{{4}}", block)
+
+            if not nums_in_block:
+                continue
+
+            num_part, ano = nums_in_block[0].replace(".", "").split("/")
+            numero_ano = f"{num_part}/{ano}"
+
+            if numero_ano in reqs_to_ignore and not bloco_parece_requerimento_real(block):
+                continue
+
+            classif = classify_req(block)
+            requerimentos.append([sigla_prefix, num_part, ano, "", "", classif])
+
+        nao_recebidas_header_pattern = re.compile(
+            r"^\s*PROPOSIÇÕES\s+NÃO\s+RECEBIDAS\s*$",
+            re.IGNORECASE | re.MULTILINE
+        )
+
+        rqn_nao_recebido_pattern = re.compile(
+            r"^\s*REQUERIMENTO\s+N[º°O]?\s+(\d{1,5}(?:\.\d{3})?)/(\d{4})\b",
+            re.IGNORECASE | re.MULTILINE
+        )
+
+        fim_nao_recebidas_pattern = re.compile(
+            r"^\s*(?:Oradores\s+Inscritos|2ª\s+Parte|Questões\s+de\s+Ordem|Comunicações)\s*$",
+            re.IGNORECASE | re.MULTILINE
+        )
+
+        for header_match in nao_recebidas_header_pattern.finditer(self.text):
+            start_idx = header_match.end()
+            fim_match = fim_nao_recebidas_pattern.search(self.text, start_idx)
+            end_idx = fim_match.start() if fim_match else len(self.text)
+            nao_recebidos_block = self.text[start_idx:end_idx]
+
+            # Segurança: a seção real é curta. Se o bloco avançar demais,
+            # corta antes de trechos de votação/atas de comissão para evitar
+            # capturar requerimentos citados em outro contexto.
+            corte_extra = re.search(
+                r"\b(?:Vota[cç][aã]o\s+do\s+Requerimento|Submetidos\s+a\s+vota[cç][aã]o|foi\s+declarado\s+prejudicado)\b",
+                nao_recebidos_block,
+                flags=re.IGNORECASE
+            )
+            if corte_extra:
+                nao_recebidos_block = nao_recebidos_block[:corte_extra.start()]
+
+            for match in rqn_nao_recebido_pattern.finditer(nao_recebidos_block):
+                num_part = match.group(1).replace(".", "")
+                ano = match.group(2)
+                numero_ano = f"{num_part}/{ano}"
+
+                if numero_ano not in reqs_to_ignore:
+                    requerimentos.append(["RQN", num_part, ano, "", "", "NÃO RECEBIDO"])
+
+        prioridade = {
+            "Voto de congratulações": 100,
+            "Manifestação de pesar": 90,
+            "Manifestação de repúdio": 90,
+            "Moção de aplauso": 90,
+            "Manifestação de apoio": 90,
+            "Recebido para apreciação": 50,
+            "Recebido": 50,
+            "Prejudicado": 50,
+            "Rejeitado": 50,
+            "NÃO RECEBIDO": 55,
+            "": 0,
+        }
+
+        melhor_por_key = {}
+
+        for r in requerimentos:
+            key = (r[0], r[1], r[2])
+            atual = melhor_por_key.get(key)
+
+            if atual is None:
+                melhor_por_key[key] = r
+            else:
+                classif_nova = r[5] if len(r) > 5 else ""
+                classif_atual = atual[5] if len(atual) > 5 else ""
+
+                if prioridade.get(classif_nova, 0) > prioridade.get(classif_atual, 0):
+                    melhor_por_key[key] = r
+
+        unique_reqs = list(melhor_por_key.values())
+
+        return pd.DataFrame(
+            unique_reqs,
+            columns=["Sigla", "Número", "Ano", "Coluna4", "Coluna5", "Classificação"]
+        )
+
+    def process_pareceres(self) -> pd.DataFrame:
+        """
+        Extrai somente pareceres que publicam texto novo de emenda ou substitutivo.
+
+        Regra principal:
+        - Não usa a seção "TRAMITAÇÃO DE PROPOSIÇÕES" como delimitador.
+        - Não considera simples menções como "na forma do Substitutivo nº 1" ou
+          "com a Emenda nº 1".
+        - Só registra quando houver texto efetivamente publicado:
+            1) linha própria "SUBSTITUTIVO Nº ..." dentro do próprio parecer;
+            2) linha própria "EMENDA Nº ..." dentro do próprio parecer;
+            3) título explícito "EMENDA Nº ... AO PROJETO ...";
+            4) título explícito "EMENDAS AO PROJETO ..." seguido de emenda numerada.
+        """
+        found_projects = {}
+
+        def registrar_tipo(sigla: str, numero: str, ano: str, tipo_item: str):
+            sigla = str(sigla or "").strip().upper()
+            numero = normalizar_numero_proposicao(numero)
+            ano = str(ano or "").strip()
+
+            if len(ano) == 2:
+                ano = f"20{ano}"
+
+            if not sigla or not numero or not ano or not tipo_item:
+                return
+
+            project_key = (sigla, numero, ano)
+
+            if project_key not in found_projects:
+                found_projects[project_key] = set()
+
+            found_projects[project_key].add(tipo_item)
+
+        def sigla_por_tipo(tipo_raw: str) -> str:
+            tipo_raw = re.sub(r"\s+", " ", str(tipo_raw or "").strip())
+            return SIGLA_MAP_PARECER.get(tipo_raw.lower(), tipo_raw.upper())
+
+        tipo_prop_regex = (
+            r"Requerimento|"
+            r"Projeto de Lei Complementar|"
+            r"Projeto de Lei|"
+            r"Projeto de Resolução|"
+            r"Proposta de Emenda à Constituição|"
+            r"PLC|PL|PRE|PEC"
+        )
+
+        numero_prop_regex = r"\d{1,5}(?:\s*\.\s*\d{1,3})?"
+
+        texto = self.text
+
+        # Remove trechos típicos de votação de requerimento para reduzir ruído,
+        # mas sem depender de marcador de seção.
+        votacao_pattern = re.compile(
+            r"(Votação do Requerimento[\s\S]*?)"
+            r"(?=Votação do Requerimento|^\s*PARECER\b|Diário do Legislativo - Poder Legislativo|$)",
+            re.IGNORECASE | re.MULTILINE
+        )
+        texto = votacao_pattern.sub("", texto)
+
+        # 1) Emenda cujo próprio título informa a proposição.
+        emenda_completa_pattern = re.compile(
+            rf"^\s*EMENDA\s+N[º°O]?\s+\d+\s+AO\s+"
+            rf"(?:SUBSTITUTIVO\s+N[º°O]?\s+\d+\s+AO\s+)?"
+            rf"({tipo_prop_regex})\s+(?:N[º°O]?\s*)?"
+            rf"({numero_prop_regex})\s*/\s*(\d{{2,4}})\b",
+            re.IGNORECASE | re.MULTILINE
+        )
+
+        for match in emenda_completa_pattern.finditer(texto):
+            registrar_tipo(
+                sigla_por_tipo(match.group(1)),
+                match.group(2),
+                match.group(3),
+                "EMENDA"
+            )
+
+        # 2) Título coletivo "EMENDAS AO PROJETO..." seguido de emenda numerada.
+        emendas_ao_projeto_pattern = re.compile(
+            rf"^\s*EMENDAS\s+AO\s+({tipo_prop_regex})\s+(?:N[º°O]?\s*)?"
+            rf"({numero_prop_regex})\s*/\s*(\d{{2,4}})\b",
+            re.IGNORECASE | re.MULTILINE
+        )
+
+        proximo_titulo_ou_parecer_pattern = re.compile(
+            r"^\s*(?:PARECER\b|EMENDAS\s+AO\s+|PROJETO\s+DE\s+LEI\b|REQUERIMENTOS\b|COMUNICAÇÕES\b)",
+            re.IGNORECASE | re.MULTILINE
+        )
+
+        for match in emendas_ao_projeto_pattern.finditer(texto):
+            trecho_depois = texto[match.end():]
+            corte = proximo_titulo_ou_parecer_pattern.search(trecho_depois)
+            bloco_emendas = trecho_depois[:corte.start()] if corte else trecho_depois[:2000]
+
+            if re.search(r"^\s*EMENDA\s+N[º°O]?\s+\d+\b", bloco_emendas, re.IGNORECASE | re.MULTILINE):
+                registrar_tipo(
+                    sigla_por_tipo(match.group(1)),
+                    match.group(2),
+                    match.group(3),
+                    "EMENDA"
+                )
+
+        # 3) Pareceres: associa texto próprio de emenda/substitutivo ao cabeçalho do próprio parecer.
+        parecer_header_pattern = re.compile(
+            rf"^\s*PARECER\b"
+            rf"(?i:[\s\S]{{0,360}}?"
+            rf"\b({tipo_prop_regex})\s+"
+            rf"(?:n[º°o]|N[º°O])?\s*"
+            rf"({numero_prop_regex})\s*/\s*(\d{{2,4}})\b)",
+            re.MULTILINE
+        )
+
+        emenda_titulo_pattern = re.compile(
+            r"^\s*EMENDA\s+N[º°O]?\s*\d+\s*$",
+            re.IGNORECASE | re.MULTILINE
+        )
+        substitutivo_titulo_pattern = re.compile(
+            r"^\s*SUBSTITUTIVO\s+N[º°O]?\s*\d+\s*$",
+            re.IGNORECASE | re.MULTILINE
+        )
+
+        headers = list(parecer_header_pattern.finditer(texto))
+
+        for i, header in enumerate(headers):
+            bloco_inicio = header.start()
+            bloco_fim = headers[i + 1].start() if i + 1 < len(headers) else len(texto)
+            bloco = texto[bloco_inicio:bloco_fim]
+
+            # Evita que uma ata longa ou uma ordem do dia seja tratada como parecer.
+            # Um parecer real tem Relatório/Fundamentação/Conclusão ou pelo menos Conclusão.
+            if not re.search(r"\bConclus[aã]o\b", bloco, re.IGNORECASE):
+                continue
+
+            conclusoes = list(
+                re.finditer(
+                    r"^\s*Conclus[aã]o\s*$",
+                    bloco,
+                    re.IGNORECASE | re.MULTILINE
+                )
+            )
+
+            if not conclusoes:
+                continue
+
+            # Usa a primeira conclusão após o cabeçalho do parecer atual.
+            # Isso evita selecionar conclusões pertencentes a relatórios ou
+            # outros documentos que tenham sido incorporados ao mesmo bloco.
+            trecho_decisivo = bloco[conclusoes[0].start():]
+
+            # Corta assinaturas e evita que uma publicação posterior seja
+            # grudada ao parecer. Abrange tanto pareceres de comissão quanto
+            # pareceres da Mesa da Assembleia.
+            m_sala = re.search(
+                r"^\s*Sala\s+(?:"
+                r"das\s+Comiss(?:ões|oes)|"
+                r"de\s+Reuniões\s+da\s+Mesa\s+da\s+Assembleia"
+                r")\b",
+                trecho_decisivo,
+                re.IGNORECASE | re.MULTILINE
+            )
+            if m_sala:
+                trecho_decisivo = trecho_decisivo[:m_sala.start()]
+
+            # Só conta quando a conclusão anuncia texto novo e esse texto aparece como título próprio.
+            # Não conta "apresentado pela Comissão de ...", que é substitutivo/emenda anterior.
+            anuncia_texto_novo = bool(re.search(
+                r"\b(?:a\s+seguir|ao\s+final|abaixo)\s+(?:redigido|redigida|apresentado|apresentada)|"
+                r"\b(?:apresentamos|redigimos)\b",
+                trecho_decisivo,
+                re.IGNORECASE
+            ))
+
+            tem_emenda_publicada = bool(emenda_titulo_pattern.search(trecho_decisivo))
+            tem_substitutivo_publicado = bool(substitutivo_titulo_pattern.search(trecho_decisivo))
+
+            if not anuncia_texto_novo and not (tem_emenda_publicada or tem_substitutivo_publicado):
+                continue
+
+            sigla = sigla_por_tipo(header.group(1))
+            numero = header.group(2)
+            ano = header.group(3)
+
+            if tem_emenda_publicada:
+                registrar_tipo(sigla, numero, ano, "EMENDA")
+
+            if tem_substitutivo_publicado:
+                registrar_tipo(sigla, numero, ano, "SUBSTITUTIVO")
+
+        pareceres = []
+        for (sigla, numero, ano), types in found_projects.items():
+            if "SUBSTITUTIVO" in types and "EMENDA" in types:
+                type_str = "SUB/EMENDA"
+            elif "SUBSTITUTIVO" in types:
+                type_str = "SUBSTITUTIVO"
+            elif "EMENDA" in types:
+                type_str = "EMENDA"
+            else:
+                type_str = ""
+
+            if type_str:
+                pareceres.append([sigla, numero, ano, type_str])
+
+        return pd.DataFrame(pareceres, columns=["Sigla", "Número", "Ano", "Tipo"])
+
+    def process_all(self) -> dict:
+        df_normas = self.process_normas()
+        df_proposicoes = self.process_proposicoes()
+        df_requerimentos = self.process_requerimentos()
+        df_pareceres = self.process_pareceres()
+        return {
+            "Normas": df_normas,
+            "Proposicoes": df_proposicoes,
+            "Requerimentos": df_requerimentos,
+            "Pareceres": df_pareceres
+        }
+
+
+# =========================
+# CLASS AdministrativeProcessor
+# =========================
+class AdministrativeProcessor:
+    def __init__(self, pdf_bytes: bytes):
+        self.pdf_bytes = pdf_bytes
+
+        self.meses = {
+            "janeiro": "01",
+            "fevereiro": "02",
+            "março": "03",
+            "marco": "03",
+            "abril": "04",
+            "maio": "05",
+            "junho": "06",
+            "julho": "07",
+            "agosto": "08",
+            "setembro": "09",
+            "outubro": "10",
+            "novembro": "11",
+            "dezembro": "12"
+        }
+
+        self.norma_publicada_regex = re.compile(
+            r'^(DELIBERAÇÃO DA MESA|'
+            r'PORTARIA\s+(?:DGE|PSEC\s*/\s*DGE|PRES\s*/\s*DGE|PRES\s*/\s*PSEC|PRES\s*/\s*PSEC\s*/\s*DGE)|'
+            r'ORDEM DE SERVIÇO\s+(?:DGE|PSEC\s*/\s*DGE|PRES\s*/\s*PSEC|PRES\s*/\s*PSEC\s*/\s*DGE))'
+            r'\s+N[º°]\s+([\d\.]+(?:-[A-Z])?)\s*/\s*(\d{4})\s*$',
+            re.IGNORECASE | re.MULTILINE
+        )
+
+        self.revogacoes_caput_regex = re.compile(
+            r'Ficam\s+revogados\s+os\s+seguintes\s+atos'
+            r'(?:\s+e\s+dispositivos)?\s+normativos,'
+            r'\s+sem\s+preju[ií]zo\s+dos\s+efeitos\s+por\s+eles\s+produzidos\s*:',
+            re.IGNORECASE
+        )
+
+        self.revogacao_simples_regex = re.compile(r'\bFic(?:a|am)\s+revogad(?:a|o|as|os)\b', re.IGNORECASE)
+        self.sem_efeito_regex = re.compile(r'\bFic(?:a|am)\s+sem\s+efeito\b|\bTorn(?:a|am)\s+sem\s+efeito\b', re.IGNORECASE)
+        self.prorrogacao_regex = re.compile(r'\bFic(?:a|am)\s+prorrogad(?:a|o|as|os)\b', re.IGNORECASE)
+        self.substituicao_regex = re.compile(
+            r'\bFic(?:a|am)\s+substitu[ií]d(?:a|o|as|os)\b',
+            re.IGNORECASE
+        )
+        self.redacao_regex = re.compile(
+            r'\bpassa\s+a\s+vigorar\b|\bpassam\s+a\s+vigorar\b|\bpassa\s+a\s+vigorar\s+com\s+a\s+seguinte\s+reda[cç][aã]o\b',
+            re.IGNORECASE
+        )
+
+        dash = r'[–—-]'
+
+        self.fim_lista_revogacoes_regex = re.compile(
+            rf'\bArt\.\s*\d+º?\s*{dash}\s*|\bArtigo\s+\d+º?\s*{dash}\s*',
+            re.IGNORECASE
+        )
+
+        sigla_adm = (
+            rf'(?:DGE|PSEC\s*/\s*DGE|PRES\s*/\s*DGE|'
+            rf'PRES\s*/\s*PSEC|PRES\s*/\s*PSEC\s*/\s*DGE)'
+        )
+
+        qualificador_travessao = rf'(?:\s*{dash}\s*{sigla_adm}\s*{dash})?'
+
+        self.norma_alterada_regex = re.compile(
+            rf'\b('
+                rf'DELIBERAÇÃO\s+DA\s+MESA'
+                rf'|'
+                rf'PORTARIA'
+                rf'(?:'
+                    rf'\s+DA\s+DIRETORIA-GERAL'
+                    rf'|\s+DA\s+PRESID[ÊE]NCIA\s+E\s+DA\s+DIRETORIA-GERAL'
+                    rf'|\s+DGE'
+                    rf'|\s+PSEC\s*/\s*DGE'
+                    rf'|\s+PRES\s*/\s*DGE'
+                    rf'|\s+PRES\s*/\s*PSEC'
+                    rf'|\s+PRES\s*/\s*PSEC\s*/\s*DGE'
+                rf')?'
+                rf'{qualificador_travessao}'
+                rf'|'
+                rf'ORDEM\s+DE\s+SERVI[ÇC]O'
+                rf'(?:'
+                    rf'\s+DA\s+PRESID[ÊE]NCIA'
+                    rf'(?:,\s*DA\s+1[ªº]\s*{dash}\s*SECRETARIA)?'
+                    rf'(?:\s+E\s+DA\s+DIRETORIA-GERAL)?'
+                    rf'|'
+                    rf'\s+DA\s+1[ªº]\s*{dash}\s*SECRETARIA'
+                    rf'\s+E\s+DA\s+DIRETORIA-GERAL'
+                    rf'|\s+DGE'
+                    rf'|\s+PSEC\s*/\s*DGE'
+                    rf'|\s+PRES\s*/\s*PSEC'
+                    rf'|\s+PRES\s*/\s*PSEC\s*/\s*DGE'
+                rf')?'
+                rf'{qualificador_travessao}'
+            rf')'
+            rf'\s*N[º°]\s*([\d\.]+(?:-[A-Z])?)'
+            rf'(?:\s*/\s*(\d{{4}}))?'
+            rf'(?:\s*,\s*de\s*[^;\.]*?(\d{{4}}))?',
+            re.IGNORECASE
+        )
+
+        self.fecho_palacio_regex = re.compile(
+            r'Pal[aá]cio\s+da\s+Inconfid[eê]ncia\s*,\s*'
+            r'(\d{1,2})\s+de\s+([A-Za-zçÇãÃáÁéÉíÍóÓôÔúÚ]+)\s+de\s+(\d{4})',
+            re.IGNORECASE
+        )
+        self.fecho_sala_mesa_regex = re.compile(
+            r'Sala\s+de\s+Reuni[õo]es\s+da\s+Mesa\s+da\s+Assembleia'
+            r'(?:\s+Legislativa)?\s*,\s*'
+            r'(\d{1,2})\s+de\s+([A-Za-zçÇãÃáÁéÉíÍóÓôÔúÚ]+)\s+de\s+(\d{4})',
+            re.IGNORECASE
+        )
+
+        self.regex_dcs = re.compile(r'DECIS[ÃA]O DA 1ª-SECRETARIA', re.IGNORECASE)
+
+    def _formatar_data_fecho(self, bloco: str) -> str:
+        bloco = bloco or ""
+
+        m = self.fecho_palacio_regex.search(bloco)
+        if not m:
+            m = self.fecho_sala_mesa_regex.search(bloco)
+        if not m:
+            return ""
+
+        dia = m.group(1).zfill(2)
+        mes_nome = (m.group(2) or "").strip().lower()
+        ano = (m.group(3) or "").strip()
+        mes = self.meses.get(mes_nome, "")
+        if not mes:
+            return ""
+        return f"{dia}/{mes}/{ano}"
+
+    def _normalizar_sigla(self, tipo_txt_upper: str) -> str:
+            t = (tipo_txt_upper or "").upper()
+            t = re.sub(r'\s+', ' ', t)
+            t = re.sub(r'\s*/\s*', '/', t)
+
+            if "DELIBERAÇÃO DA MESA" in t:
+                return "DLB"
+            if "PORTARIA" in t:
+                return "PRT"
+            if "ORDEM DE SERVI" in t:
+                return "OSV"
+
+            return t.strip()
+
+    def _sigla_norma_publicada(self, tipo_raw: str) -> str:
+        t = (tipo_raw or "").upper().strip()
+        t = re.sub(r'\s+', ' ', t)
+        t = re.sub(r'\s*/\s*', '/', t)
+        return {
+            "DELIBERAÇÃO DA MESA": "DLB",
+            "PORTARIA DGE": "PRT",
+            "PORTARIA PSEC/DGE": "PRT",
+            "PORTARIA PRES/DGE": "PRT",
+            "PORTARIA PRES/PSEC": "PRT",
+            "ORDEM DE SERVIÇO PRES/PSEC": "OSV",
+        }.get(t, "")
+
+    def process_pdf(self):
+        try:
+            reader = pypdf.PdfReader(io.BytesIO(self.pdf_bytes))
+        except Exception as e:
+            st.error(f"Erro ao abrir o arquivo PDF: {e}")
+            return None
+
+        page_texts = []
+        for p in reader.pages:
+            page_texts.append(re.sub(r"\n+", "\n", re.sub(r"[ \t]+", " ", p.extract_text() or "")))
+
+        if not any(t.strip() for t in page_texts):
+            raise ValueError("PDF administrativo sem texto extraível.")
+
+        offsets = []
+        full_text_parts = []
+        cursor = 0
+        for idx, pt in enumerate(page_texts, start=1):
+            full_text_parts.append(pt + "\n")
+            cursor_end = cursor + len(pt) + 1
+            offsets.append((cursor, cursor_end, idx))
+            cursor = cursor_end
+
+        full_text = "".join(full_text_parts)
+
+        def _pagina_from_pos(pos: int):
+            for start, end, pnum in offsets:
+                if start <= pos < end:
+                    return pnum
+            return ""
+
+        def _segmento_ate_proximo_artigo(bloco: str, pos: int) -> str:
+            trecho = bloco[pos:]
+            m_art = self.fim_lista_revogacoes_regex.search(trecho)
+
+            if m_art:
+                return trecho[:m_art.start()]
+
+            return trecho
+
+        normas = []
+        for m in self.norma_publicada_regex.finditer(full_text):
+            pos = m.start()
+            pagina = _pagina_from_pos(pos)
+
+            tipo_raw = m.group(1)
+            numero = (m.group(2) or "").replace(".", "").replace(" ", "")
+            ano = (m.group(3) or "").strip()
+
+            sigla = self._sigla_norma_publicada(tipo_raw)
+            if sigla:
+                normas.append({
+                    "pos": pos,
+                    "end": m.end(),
+                    "pagina": pagina,
+                    "coluna": 1,
+                    "sigla": sigla,
+                    "numero": numero,
+                    "ano": ano
+                })
+
+        resultados = []
+
+        for i, n in enumerate(normas):
+            start = n["end"]
+            end = normas[i + 1]["pos"] if i + 1 < len(normas) else len(full_text)
+            bloco = full_text[start:end]
+
+            linha = {
+                "Página": n["pagina"],
+                "Coluna": n["coluna"],
+                "Sanção": self._formatar_data_fecho(bloco),
+                "Sigla": n["sigla"],
+                "Número": n["numero"],
+                "Ano": n["ano"],
+                "Alterações": ""
+            }
+            resultados.append(linha)
+
+            seen_alteracoes = set()
+
+            def _add_alt(chave: str):
+                nonlocal resultados
+
+                chave = re.sub(r"\s+", " ", str(chave or "").strip().upper())
+
+                if not chave:
+                    return
+
+                if chave in seen_alteracoes:
+                    return
+    
+                seen_alteracoes.add(chave)
+
+                if linha["Alterações"] == "":
+                    linha["Alterações"] = chave
+                else:
+                    resultados.append({
+                        "Página": "",
+                        "Coluna": "",
+                        "Sanção": "",
+                        "Sigla": "",
+                        "Número": "",
+                        "Ano": "",
+                        "Alterações": chave
+                    })
+
+            def _extrair_alteracoes(seg: str):
+                for alt in self.norma_alterada_regex.finditer(seg or ""):
+                    tipo_alt_raw = (alt.group(1) or "").upper().strip()
+                    num_alt = (alt.group(2) or "").replace(".", "").replace(" ", "")
+                    ano_alt = alt.group(3) or alt.group(4) or ""
+                    sigla_alt = self._normalizar_sigla(tipo_alt_raw)
+
+                    if sigla_alt == linha["Sigla"] and num_alt == linha["Número"]:
+                        if (not ano_alt) or (ano_alt == linha["Ano"]):
+                            continue
+
+                    chave = f"{sigla_alt} {num_alt}" + (f" {ano_alt}" if ano_alt else "")
+                    _add_alt(chave)
+
+            cap = self.revogacoes_caput_regex.search(bloco)
+            if cap:
+                after = bloco[cap.end():]
+                fim = None
+                m_art = self.fim_lista_revogacoes_regex.search(after)
+                if m_art:
+                    fim = m_art.start()
+                segmento = after[:fim] if fim is not None else after
+                _extrair_alteracoes(segmento)
+
+            gats_genericos = [
+                self.substituicao_regex,
+                self.sem_efeito_regex,
+                self.prorrogacao_regex,
+            ]
+
+            # Se já houve caput específico de revogação, não processa
+            # "Ficam revogados" de novo pelo gatilho genérico.
+            if not cap:
+                gats_genericos.append(self.revogacao_simples_regex)
+
+            for gat in gats_genericos:
+                for gm in gat.finditer(bloco):
+                    janela = _segmento_ate_proximo_artigo(bloco, gm.start())
+                    _extrair_alteracoes(janela)
+
+            for gm in self.redacao_regex.finditer(bloco):
+                start_j = max(0, gm.start() - 600)
+                end_j = min(len(bloco), gm.end() + 1200)
+                janela = bloco[start_j:end_j]
+                _extrair_alteracoes(janela)
+
+        if self.regex_dcs.search(full_text):
+            resultados.append({
+                "Página": "",
+                "Coluna": 1,
+                "Sanção": "",
+                "Sigla": "DCS",
+                "Número": "",
+                "Ano": "",
+                "Alterações": ""
+            })
+
+        return pd.DataFrame(
+            resultados,
+            columns=["Página", "Coluna", "Sanção", "Sigla", "Número", "Ano", "Alterações"]
+        )
+
+
+# =========================
+# CLASS ExecutiveProcessor
+# =========================
+class ExecutiveProcessor:
+    def __init__(self, pdf_bytes: bytes):
+        self.pdf_bytes = self._clean_pdf_bytes(pdf_bytes)
+
+        self.mapa_tipos = {
+            "LEI": "LEI",
+            "LEI COMPLEMENTAR": "LCP",
+            "DECRETO": "DEC",
+            "DECRETO NE": "DNE"
+        }
+
+        self.norma_regex = re.compile(
+            r'(?:^|\n|\r|\f)\s*(\*)?\s*(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+N[º°]\s*([\d\s\.]+),?\s*DE\s+(.+?)(?:\n|$)',
+            re.DOTALL
+        )
+        self.comandos_regex = re.compile(
+            r"(Ficam\s+revogados|Fica\s+revogado|"
+            r"Fica\s+acrescentad[oa]|Ficam\s+acrescentad[oa]s|"
+            r"Fica\s+alterad[oa]|Ficam\s+alterad[oa]s|"
+            r"Fica\s+acrescid[oa]|Ficam\s+acrescid[oa]s|"
+            r"\bAltera\b|\bAlteram\b|"
+            r"Revoga|Revogam|"
+            r"Dá\s+nova\s+redação|Dão\s+nova\s+redação|"
+            r"Passa\s+a\s+vigorar|Passam\s+a\s+vigorar|"
+            r"passando\s+o\s+item)",
+            re.IGNORECASE
+        )
+        self.norma_alterada_regex = re.compile(
+            r'(LEI\s+COMPLEMENTAR|LEI|DECRETO\s+NE|DECRETO)\s+'
+            r'N[º°]?\s*([\d][\d\.\s]*)'
+            r'(?:\s*/\s*(\d{4}))?'
+            r'(?:,\s*de\s*([\s\S]*?\b\d{4}\b))?',
+            re.IGNORECASE
+        )
+
+    def _clean_pdf_bytes(self, dirty_bytes: bytes) -> bytes:
+        pdf_signature = b'%PDF-'
+        try:
+            start_index = dirty_bytes.index(pdf_signature)
+            if start_index > 0:
+                return dirty_bytes[start_index:]
+            return dirty_bytes
+        except ValueError:
+            return dirty_bytes
+
+    def _cortar_apos_atos_governador(self, texto: str) -> tuple[str, bool]:
+        """
+        Corta o texto a partir do marcador 'Atos do Governador'.
+        Retorna:
+          - texto antes do marcador
+          - True se o marcador foi encontrado
+        """
+        m = re.search(r"\bAtos\s+do\s+Governador\b", texto, re.IGNORECASE)
+        if not m:
+            return texto, False
+
+        return texto[:m.start()].strip(), True
+
+    def _remover_rodape_autenticidade(self, texto: str) -> str:
+                            if not texto:
+                                return texto
+
+                            padroes = [
+                                r'Documento\s+assinado\s+eletronicamente\s+com\s+fundamento\s+no\s+art\.\s*6º\s+do\s+Decreto\s+n[º°]\s*47\.222,\s+de\s+26\s+de\s+julho\s+de\s+2017\.',
+                                r'A\s+autenticidade\s+deste\s+documento\s+pode\s+ser\s+verificada\s+no\s+endereço\s+http://www\.jornalminasgerais\.mg\.gov\.br/Autenticidade,\s+sob\s+o\s+número\s+\d+\.',
+                                r'http://www\.jornalminasgerais\.mg\.gov\.br/Autenticidade',
+                             ]
+
+                            texto_limpo = texto
+                            for padrao in padroes:
+                                texto_limpo = re.sub(padrao, ' ', texto_limpo, flags=re.IGNORECASE)
+
+                            texto_limpo = re.sub(r'[ \t]+', ' ', texto_limpo)
+                            texto_limpo = re.sub(r'\n\s*\n+', '\n', texto_limpo)
+                            return texto_limpo.strip()
+
+    def find_relevant_pages(self) -> tuple:
+        try:
+            reader = pypdf.PdfReader(io.BytesIO(self.pdf_bytes))
+            start_page_num, end_page_num = None, None
+            for i, page in enumerate(reader.pages):
+                text = page.extract_text() or ""
+                if not text.strip():
+                    continue
+                if re.search(r'Leis\s*e\s*Decretos', text, re.IGNORECASE):
+                    start_page_num = i
+                if re.search(r'Atos\s*do\s*Governador', text, re.IGNORECASE):
+                    end_page_num = i
+            if start_page_num is None or end_page_num is None or start_page_num > end_page_num:
+                st.warning("Não foi encontrado o trecho de 'Leis e Decretos' ou 'Atos do Governador' para delimitar a seção.")
+                return None, None
+            return start_page_num, end_page_num + 1
+        except Exception as e:
+            st.error(f"Erro ao buscar páginas relevantes com PyPDF: {e}")
+            return None, None
+
+    def process_pdf(self) -> pd.DataFrame:
+        start_page_idx, end_page_idx = self.find_relevant_pages()
+        if start_page_idx is None:
+            return pd.DataFrame()
+
+        trechos = []
+        fim_secao = False
+
+        try:
+            with pdfplumber.open(io.BytesIO(self.pdf_bytes)) as pdf:
+                for i in range(start_page_idx, end_page_idx):
+                    if fim_secao:
+                        break
+
+                    pagina = pdf.pages[i]
+                    largura, altura = pagina.width, pagina.height
+
+                    for col_num, (x0, x1) in enumerate(
+                        [(0, largura / 2), (largura / 2, largura)],
+                        start=1
+                    ):
+                        coluna = pagina.crop((x0, 0, x1, altura)).extract_text(layout=True) or ""
+                        texto_limpo = coluna.replace("\xa0", " ")
+                        texto_limpo = self._remover_rodape_autenticidade(texto_limpo)
+
+                        texto_limpo, encontrou_fim = self._cortar_apos_atos_governador(texto_limpo)
+
+                        if texto_limpo.strip():
+                            trechos.append({
+                                "pagina": i + 1,
+                                "coluna": col_num,
+                                "texto": texto_limpo
+                            })
+
+                        if encontrou_fim:
+                            fim_secao = True
+                            break
+
+        except Exception as e:
+            st.error(f"Erro ao extrair texto detalhado do PDF do Executivo: {e}")
+            return pd.DataFrame()
+
+        dados = []
+        ultima_norma = None
+        seen_alteracoes = set()
+
+        for t in trechos:
+            pagina = t["pagina"]
+            coluna = t["coluna"]
+            texto = t["texto"]
+            eventos = []
+
+            for m in self.norma_regex.finditer(texto):
+                eventos.append(("published", m.start(), m))
+            for c in self.comandos_regex.finditer(texto):
+                eventos.append(("command", c.start(), c))
+
+            eventos.sort(key=lambda e: e[1])
+
+            for ev in eventos:
+                tipo_ev, pos_ev, match_obj = ev
+                command_text = match_obj.group(0).lower()
+
+                if tipo_ev == "published":
+                    match = match_obj
+
+                    tem_asterisco = bool(match.group(1))
+                    tipo_raw = match.group(2).strip()
+                    tipo = self.mapa_tipos.get(tipo_raw.upper(), tipo_raw)
+                    numero = match.group(3).replace(" ", "").replace(".", "")
+                    data_texto = (match.group(4) or "").strip()
+
+                    data_match = re.search(
+                        r'(\d{1,2})(?:º)?\s+DE\s+([A-ZÇÃÁÉÍÓÔÚ]+)\s+DE\s+(\d{4})',
+                        data_texto,
+                        re.IGNORECASE
+                    )
+
+                    if data_match:
+                        dia = data_match.group(1).zfill(2)
+                        mes_nome = data_match.group(2).upper()
+                        mes = meses.get(mes_nome, "")
+                        ano = data_match.group(3)
+                        sancao = f"{dia}/{mes}/{ano}" if mes else ""
+                    else:
+                        sancao = ""
+
+                    linha = {
+                        "Página": pagina,
+                        "Coluna": coluna,
+                        "Sanção": sancao,
+                        "Tipo": tipo,
+                        "Número": numero,
+                        "Alterações": "",
+                        "Observação": "*Retificação" if tem_asterisco else ""
+                    }
+                    dados.append(linha)
+                    ultima_norma = linha
+                    seen_alteracoes = set()
+
+                elif tipo_ev == "command":
+                    if ultima_norma is None:
+                        continue
+
+                    # A janela de busca deve ficar dentro da norma atual.
+                    # Ela não pode atravessar para a próxima epígrafe normativa.
+                    raio_antes = 350
+                    raio_depois = 350
+
+                    normas_na_coluna = list(self.norma_regex.finditer(texto))
+
+                    norma_anterior_end = 0
+                    proxima_norma_start = len(texto)
+
+                    for nm in normas_na_coluna:
+                        if nm.start() < pos_ev:
+                            norma_anterior_end = max(norma_anterior_end, nm.end())
+                        elif nm.start() > pos_ev:
+                            proxima_norma_start = min(proxima_norma_start, nm.start())
+
+                    start_block = max(norma_anterior_end, pos_ev - raio_antes)
+                    end_block = min(proxima_norma_start, pos_ev + raio_depois)
+
+                    bloco = texto[start_block:end_block]
+
+                    alteracoes_para_processar = []
+
+                    if "revoga" in command_text or "revogado" in command_text:
+                        alteracoes_para_processar = list(
+                            self.norma_alterada_regex.finditer(bloco)
+                        )
+                    else:
+                        alteracoes_candidatas = list(
+                            self.norma_alterada_regex.finditer(bloco)
+                        )
+
+                        if alteracoes_candidatas:
+                            pos_comando_no_bloco = pos_ev - start_block
+
+                            melhor_candidato = min(
+                                alteracoes_candidatas,
+                                key=lambda m: abs(m.start() - pos_comando_no_bloco)
+                            )
+
+                            alteracoes_para_processar = [melhor_candidato]
+
+                    for alt in alteracoes_para_processar:
+                        tipo_alt_raw = alt.group(1).strip()
+                        tipo_alt = self.mapa_tipos.get(tipo_alt_raw.upper(), tipo_alt_raw)
+
+                        num_alt_bruto = alt.group(2) or ""
+                        num_alt = re.sub(r"[^\d]", "", num_alt_bruto)
+
+                        ano_alt = (alt.group(3) or "").strip()
+
+                        if not ano_alt:
+                            data_texto_alt = alt.group(4) or ""
+                            ano_match = re.search(r"\b(\d{4})\b", data_texto_alt)
+                            if ano_match:
+                                ano_alt = ano_match.group(1)
+
+                        if tipo_alt == "DEC" and num_alt == "48589" and not ano_alt:
+                            ano_alt = "2023"
+
+                        chave_alt = f"{tipo_alt} {num_alt}"
+                        if ano_alt:
+                            chave_alt += f" {ano_alt}"
+
+                        if tipo_alt == ultima_norma["Tipo"] and num_alt == ultima_norma["Número"]:
+                            continue
+
+                        if chave_alt in seen_alteracoes:
+                            continue
+
+                        seen_alteracoes.add(chave_alt)
+
+                        if ultima_norma["Alterações"] == "":
+                            ultima_norma["Alterações"] = chave_alt
+                        else:
+                            dados.append({
+                                "Página": "",
+                                "Coluna": "",
+                                "Sanção": "",
+                                "Tipo": "",
+                                "Número": "",
+                                "Alterações": chave_alt,
+                                "Observação": ""
+                            })
+        return pd.DataFrame(dados) if dados else pd.DataFrame()
+
