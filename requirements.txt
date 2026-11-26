@@ -18,3 +18,4 @@ google-auth>=2.23.0
 google-auth-httplib2>=0.2.0
 caldav>=2.0,<4.0
 lxml
+Authlib>=1.3.2
