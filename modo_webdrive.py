@@ -320,13 +320,22 @@ def extrair_data_real(data_jornal, data_trabalho=None):
         erros['Legislativo'] = '%s: %s' % (type(e).__name__, e)
     try:
         pdf_adm = baixar_pdf_administrativo_webdav(data_jornal)
-        df_adm = original.AdministrativeProcessor(pdf_adm).process_pdf()
-        if df_adm is None:
-            raise RuntimeError('Falha no processamento do PDF administrativo.')
-        dfs[1] = df_adm.rename(columns={'Sigla': 'Tipo'}).copy()
-        resultados['Administrativo'] = 'OK — %d registros' % len(df_adm)
+    except FileNotFoundError:
+        resultados['Administrativo'] = (
+            'AVISO — Diário Administrativo não encontrado para '
+            f'{data_jornal:%d/%m/%Y}. Processamento continuará sem o DA.'
+        )
     except Exception as e:
         erros['Administrativo'] = '%s: %s' % (type(e).__name__, e)
+    else:
+        try:
+            df_adm = original.AdministrativeProcessor(pdf_adm).process_pdf()
+            if df_adm is None:
+                raise RuntimeError('Falha no processamento do PDF administrativo.')
+            dfs[1] = df_adm.rename(columns={'Sigla': 'Tipo'}).copy()
+            resultados['Administrativo'] = 'OK — %d registros' % len(df_adm)
+        except Exception as e:
+            erros['Administrativo'] = '%s: %s' % (type(e).__name__, e)
     # Usa a data da execução das atividades, não a data de publicação.
     if not erros:
         try:
@@ -380,6 +389,9 @@ def executar_interface():
                 return
             with st.spinner('Extraindo os diários e distribuindo as tarefas...'):
                 urls, dfs, resultados, erros = extrair_data_real(jornal, data_trabalho)
+            for fonte, mensagem in resultados.items():
+                if mensagem.startswith('AVISO'):
+                    st.warning(f'{fonte}: {mensagem}')
             if erros:
                 for fonte, mensagem in erros.items():
                     st.error(f'{fonte}: {mensagem}')
