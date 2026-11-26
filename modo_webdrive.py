@@ -1,7 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Teste: Executivo, Administrativo e Legislativo REAIS -> DataFrames -> ODS real -> WebDrive.
-Não utiliza dados fictícios. Não muda arquivo remoto sem confirmação.
-"""
+"""Processamento dos três diários e gravação ODS via WebDrive, com proteção ETag."""
 import hashlib
 import zipfile as zipfile_archive
 import hmac
@@ -291,7 +289,7 @@ def listar_indisponiveis_webdrive(data_ref):
     return indisponiveis, sorted(set(nao_reconhecidos))
 
 
-def extrair_data_real(data_jornal):
+def extrair_data_real(data_jornal, data_trabalho=None):
     texto_data = data_jornal.strftime('%d/%m/%Y')
     urls = original.montar_urls(original.preparar_datas(texto_data))
     erros = {}
@@ -332,7 +330,7 @@ def extrair_data_real(data_jornal):
     # Usa a data da execução das atividades, não a data de publicação.
     if not erros:
         try:
-            data_trabalho = datetime.now(ZoneInfo('America/Sao_Paulo')).date()
+            data_trabalho = data_trabalho or datetime.now(ZoneInfo('America/Sao_Paulo')).date()
             indisponiveis, desconhecidos = listar_indisponiveis_webdrive(data_trabalho)
             if desconhecidos:
                 st.warning('Nomes de afastamentos não reconhecidos: ' + ', '.join(desconhecidos))
@@ -362,77 +360,53 @@ def tabela_resumo(dfs):
 
 
 def executar_interface():
-    st.warning('Modo WebDrive: gravação restrita à cópia de testes. Não use na planilha oficial.')
-    jornal = st.date_input('Data do jornal a extrair', value=datetime.now(ZoneInfo('America/Sao_Paulo')).date(), format='DD/MM/YYYY', max_value=datetime.now(ZoneInfo('America/Sao_Paulo')).date(), key='webdrive_data_jornal')
-    st.caption('Fontes: Jornal Minas Gerais (Executivo), Diário Administrativo (WebDrive) e Diário do Legislativo. A distribuição considera afastamentos do calendário institucional na data de trabalho (hoje, horário de Brasília).')
+    hoje = datetime.now(ZoneInfo('America/Sao_Paulo')).date()
+    st.caption('Selecione a data de trabalho')
+    data_trabalho = st.date_input('Data', value=hoje, format='DD/MM/YYYY',
+                                  max_value=hoje, key='webdrive_data_jornal')
+    jornal = original.ajustar_data_operacional(data_trabalho)
     aba = jornal.strftime('%d%m')
-    if st.button('Consultar afastamentos de hoje'):
+    if jornal != data_trabalho:
+        st.info(f"Diário a processar: {jornal:%d/%m/%Y}. Afastamentos considerados: {data_trabalho:%d/%m/%Y}.")
+    if str(st.secrets.get('ENABLE_REMOTE_WRITE', 'false')).lower() != 'true':
+        st.warning('Gravação no WebDrive desativada pelo administrador.')
+        return
+    if st.button('Processar', type='primary', use_container_width=True, key='webdrive_processar'):
         try:
-            pessoas, desconhecidos = listar_indisponiveis_webdrive(datetime.now(ZoneInfo('America/Sao_Paulo')).date())
-            st.success('Calendário consultado: ' + (', '.join(sorted(pessoas)) or 'Nenhum integrante afastado'))
-            if desconhecidos:
-                st.warning('Nomes não reconhecidos: ' + ', '.join(desconhecidos))
-        except Exception as ex:
-            st.error('Falha na consulta CalDAV: ' + type(ex).__name__ + ': ' + str(ex))
-    st.caption('Aba prevista: **%s**. Para conferir outra data, selecione-a acima. A data do jornal não é ajustada automaticamente.' % aba)
-
-    if st.button('1. Extrair diários reais e preparar ODS', type='primary'):
-        st.session_state.pop('webdrive_preparado', None)
-        try:
-            with st.spinner('Baixando ODS do WebDrive...'):
+            with st.spinner('Verificando a planilha do WebDrive...'):
                 origem, etag, abas_anteriores = baixar_ods()
             if aba in abas_anteriores:
-                st.error('A aba %s já existe no arquivo remoto. Nenhuma gravação será feita. Escolha uma data ausente.' % aba)
-                st.stop()
-            with st.spinner('Extraindo diários oficiais e distribuindo as tarefas...'):
-                urls, dfs, status, erros = extrair_data_real(jornal)
-            for fonte, mensagem in status.items(): st.success(f'{fonte}: {mensagem}')
-            for fonte, mensagem in erros.items(): st.error(f'{fonte}: {mensagem}')
-            st.dataframe(tabela_resumo(dfs), hide_index=True)
+                st.info(f'A aba {aba} já existe. Nenhuma alteração foi realizada.')
+                return
+            with st.spinner('Extraindo os diários e distribuindo as tarefas...'):
+                urls, dfs, resultados, erros = extrair_data_real(jornal, data_trabalho)
             if erros:
-                st.error('Extração incompleta: por segurança, a planilha NÃO será criada. Corrija as falhas e tente novamente.')
-                st.stop()
+                for fonte, mensagem in erros.items():
+                    st.error(f'{fonte}: {mensagem}')
+                st.error('Processamento incompleto. A planilha não foi alterada.')
+                return
             payload = criar_payload(jornal, urls, dfs)
-            with st.spinner('Duplicando MODELO e preenchendo o ODS real...'):
+            with st.spinner('Preenchendo a planilha do WebDrive...'):
                 saida = preencher_com_libreoffice(origem, payload)
                 saida = corrigir_links_aba(saida, aba, urls)
                 saida = corrigir_link_administrativo(saida, aba, urls['administrativo'])
-            abas_depois = nomes_abas(saida)
-            if len(abas_depois) != len(abas_anteriores)+1 or abas_depois[1] != aba or set(abas_depois) != set(abas_anteriores) | {aba}:
-                raise RuntimeError('Validação do ODS falhou: abas originais não foram preservadas corretamente.')
-            st.session_state['webdrive_preparado'] = {'conteudo':saida, 'etag':etag, 'aba':aba,
-                'data':jornal.isoformat(), 'status':status, 'contagens':tabela_resumo(dfs).to_dict('records'),
-                'hash':hashlib.sha256(saida).hexdigest(), 'csv':criar_relatorio_csv(dfs)}
-            st.success('ODS preparado com dados reais: %d abas → %d. Nova aba: %s.' % (len(abas_anteriores),len(abas_depois),aba))
-        except Exception as ex:
-            st.error('%s: %s' % (type(ex).__name__, ex))
-
-    preparado = st.session_state.get('webdrive_preparado')
-    if preparado:
-        st.divider()
-        st.subheader('Conferência antes da gravação')
-        st.write('Aba gerada: **%s**; data: **%s**.' % (preparado['aba'],preparado['data']))
-        st.dataframe(pd.DataFrame(preparado['contagens']), hide_index=True)
-        st.download_button('Baixar os registros extraídos (CSV por seção)', preparado['csv'],
-            file_name='extracao_real_'+preparado['aba']+'.zip', mime='application/zip')
-        st.download_button('Baixar ODS preenchido com dados reais', preparado['conteudo'],
-            file_name='Controle_Atividades_TESTE_'+preparado['aba']+'.ods', mime=MIME_ODS)
-        if str(st.secrets.get('ENABLE_REMOTE_WRITE', 'false')).lower() != 'true':
-            st.info('Gravação remota desativada. Para habilitar somente no arquivo de teste, adicione ENABLE_REMOTE_WRITE = "true" nos Secrets.')
-        else:
-            confirma = st.checkbox('Conferi o ODS baixado; a pasta é GDI-GIL/Testes; ninguém está editando a cópia; autorizo atualizar somente essa cópia.')
-            if st.button('2. Gravar a nova aba no WebDrive', disabled=not confirma, type='primary'):
+                abas_depois = nomes_abas(saida)
+                if (len(abas_depois) != len(abas_anteriores)+1 or abas_depois[1] != aba
+                        or set(abas_depois) != set(abas_anteriores) | {aba}):
+                    raise RuntimeError('Validação do ODS falhou: abas originais não foram preservadas corretamente.')
+                codigo = gravar_ods(saida, etag)
                 try:
-                    if preparado['aba'] != jornal.strftime('%d%m') or preparado['data'] != jornal.isoformat():
-                        raise RuntimeError('A data selecionada mudou desde a extração. Prepare novamente.')
-                    with st.spinner('Gravando no WebDrive com If-Match e verificando...'):
-                        status = gravar_ods(preparado['conteudo'], preparado['etag'])
-                        remoto, _, abas = baixar_ods()
-                    if preparado['aba'] not in abas:
-                        raise RuntimeError('PUT HTTP %d, mas a aba não foi localizada no arquivo remoto. Confira manualmente.' % status)
-                    if hashlib.sha256(remoto).hexdigest() != preparado['hash']:
-                        st.warning('A aba existe, mas o conteúdo remoto difere dos bytes enviados; confira se o editor online regravou o arquivo.')
-                    st.success('Gravação confirmada: HTTP %d. Aba %s localizada no ODS remoto, total de %d abas.' % (status, preparado['aba'],len(abas)))
-                    st.session_state.pop('webdrive_preparado', None)
-                except Exception as ex:
-                    st.error('%s: %s' % (type(ex).__name__, ex))
+                    remoto, _, abas_remotas = baixar_ods()
+                except Exception:
+                    st.warning(f'Envio aceito (HTTP {codigo}), mas a conferência remota falhou. Verifique a planilha antes de repetir.')
+                    return
+            if aba not in abas_remotas:
+                st.error('Envio aceito, mas a nova aba não foi localizada. Confira a planilha antes de repetir.')
+                return
+            if hashlib.sha256(remoto).hexdigest() != hashlib.sha256(saida).hexdigest():
+                st.warning('A nova aba existe, mas o arquivo remoto difere do enviado. Confira seu conteúdo.')
+            else:
+                st.success(f'Planilha do WebDrive preenchida com sucesso. Aba {aba}.')
+            st.dataframe(tabela_resumo(dfs), hide_index=True)
+        except Exception as ex:
+            st.error(f'{type(ex).__name__}: {ex}')
