@@ -15,3 +15,5 @@ libxdamage1
 libxkbcommon0
 libgtk-3-0
 libx11-xcb1
+libreoffice-calc
+python3-uno
